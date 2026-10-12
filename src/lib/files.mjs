@@ -1,4 +1,6 @@
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'bmp'];
+/** Everything the library can open: images, Photoshop documents and Imagee projects. */
+export const OPEN_ACCEPT = 'image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp,.psd,.imagee';
 
 /** @typedef {'png'|'jpeg'|'webp'|'avif'} ExportFormat */
 /** @type {{ id: ExportFormat, label: string, mime: string, extension: string, lossy: boolean, alpha: boolean }[]} */
@@ -9,10 +11,20 @@ export const EXPORT_FORMATS = [
   { id: 'avif', label: 'AVIF', mime: 'image/avif', extension: 'avif', lossy: true, alpha: true },
 ];
 
+/** How an opened file is imported: an Imagee project, a Photoshop document, or a plain image.
+ * @param {{ type?: string, name?: string }} file @returns {'imagee' | 'psd' | 'image' | null} */
+export function fileKind(file) {
+  const ext = (file.name || '').split('.').pop()?.toLowerCase() || '';
+  if (ext === 'imagee' || file.type === 'application/x-imagee') return 'imagee';
+  if (ext === 'psd' || file.type === 'image/vnd.adobe.photoshop' || file.type === 'image/psd') return 'psd';
+  return isImageFile(file) ? 'image' : null;
+}
+
 /** @param {{ type?: string, name?: string }} file */
 export function isImageFile(file) {
-  if (file.type && file.type.startsWith('image/') && file.type !== 'image/svg+xml') return true;
   const ext = (file.name || '').split('.').pop()?.toLowerCase() || '';
+  if (ext === 'psd' || ext === 'imagee' || file.type === 'image/vnd.adobe.photoshop') return false;
+  if (file.type && file.type.startsWith('image/') && file.type !== 'image/svg+xml') return true;
   return IMAGE_EXTENSIONS.includes(ext);
 }
 

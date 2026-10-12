@@ -556,3 +556,8 @@ html[data-theme="light"] .histogram .h-b { fill: rgba(10, 132, 255, .35); }
 .layer-main { overflow: hidden; }
 .layer-main .chip { flex: none; }
 .refine { display: inline-flex; align-items: center; gap: 4px; padding-left: 10px; border-left: 0.5px solid var(--sep); }
+.export-projects { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 0.5px solid var(--sep); }
+.export-projects > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.export-projects strong { font-size: var(--type-callout); font-weight: 600; }
+.export-projects span { font-size: 11px; color: var(--label-3); }
+.export-project-buttons { display: flex; gap: 6px; flex: none; }

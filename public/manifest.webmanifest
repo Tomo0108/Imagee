@@ -13,6 +13,6 @@
   "categories": ["photo", "graphics"],
   "icons": [],
   "file_handlers": [
-    { "action": "./", "accept": { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".bmp"] } }
+    { "action": "./", "accept": { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".bmp"], "image/vnd.adobe.photoshop": [".psd"], "application/x-imagee": [".imagee"] } }
   ]
 }

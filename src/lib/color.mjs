@@ -220,3 +220,10 @@ export function normalizeColor(value) {
     lut: v.lut && typeof v.lut.id === 'string' ? { id: v.lut.id, amount: num(v.lut.amount, 100, 0, 100) } : null,
   };
 }
+
+/** Writes a cube back to `.cube` text (for project files). @param {Cube} cube */
+export function cubeText(cube) {
+  const lines = [`TITLE "${cube.title.replace(/"/g, "'")}"`, `LUT_3D_SIZE ${cube.size}`];
+  for (let i = 0; i < cube.data.length; i += 3) lines.push(`${cube.data[i].toFixed(6)} ${cube.data[i + 1].toFixed(6)} ${cube.data[i + 2].toFixed(6)}`);
+  return lines.join('\n') + '\n';
+}

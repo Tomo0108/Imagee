@@ -246,6 +246,41 @@ try {
   const [sw2] = await selectionSize();
   assert.ok(sw2 >= sw + 12 && sw2 <= sw + 20, `selection grows by about 16 px: ${sw} → ${sw2}`);
   await page.keyboard.press('Control+d');
+
+  // Save with layers as PSD and .imagee, then import both back into the library.
+  await page.evaluate(() => {
+    window.__saved = {};
+    window.showSaveFilePicker = async ({ suggestedName }) => ({ name: suggestedName, createWritable: async () => ({ write: async blob => { window.__saved[suggestedName] = blob; }, close: async () => {} }) });
+  });
+  await page.getByRole('button', { name: '書き出し' }).click();
+  await page.getByRole('button', { name: 'PSD', exact: true }).click();
+  await page.waitForFunction(() => window.__saved['square.psd']);
+  await page.getByRole('button', { name: '.imagee', exact: true }).click();
+  await page.waitForFunction(() => window.__saved['square.imagee']);
+  await page.screenshot({ path: `${out}/export-project-dark.png` });
+  const saved = await page.evaluate(async () => Promise.all(Object.entries(window.__saved).map(([name, blob]) => new Promise(resolve => {
+    const reader = new FileReader(); reader.onload = () => resolve([name, reader.result.split(',')[1]]); reader.readAsDataURL(blob);
+  }))));
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await page.waitForTimeout(500);
+  const projectChooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '画像を開く' }).first().click();
+  await (await projectChooser).setFiles(saved.map(([name, b64]) => ({ name, mimeType: name.endsWith('.psd') ? 'image/vnd.adobe.photoshop' : 'application/octet-stream', buffer: Buffer.from(b64, 'base64') })));
+  await page.locator('.project', { hasText: 'square.psd' }).waitFor();
+  assert.equal(await page.locator('.project', { hasText: 'square.png' }).count(), 2, 'the .imagee project is added');
+  await page.getByRole('button', { name: 'square.psdを開く' }).click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(500);
+  assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', 'レイヤー 1', '背景'], 'PSD layers are imported');
+  assert.ok(isBlue(await pixel(cx - 45, cy + 70)), 'PSD layer pixels are imported');
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'square.pngを開く' }).first().click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(500);
+  assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', '調整レイヤー 1', 'レイヤー 1', '背景'], '.imagee keeps every layer');
+  assert.ok(isRed(await pixel(cx + 104, cy + 250)), '.imagee keeps painted pixels');
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();

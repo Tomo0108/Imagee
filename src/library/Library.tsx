@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock3, Heart, ImagePlus, Images, LayoutGrid, List, MoreHorizontal, Pencil, Search, Settings2, Trash2, Upload, X, HardDrive } from 'lucide-react';
+import { Clock3, Heart, ImagePlus, Images, LayoutGrid, List, MoreHorizontal, Pencil, Search, Settings2, Trash2, Upload, X, HardDrive, PackageOpen } from 'lucide-react';
 import type { Project } from '../store';
 import type { Preferences } from '../lib/preferences.mjs';
 import { formatBytes, visibleProjects } from '../lib/files.mjs';
@@ -16,10 +16,10 @@ const FILTERS: { id: Filter; label: string; icon: typeof Images }[] = [
 interface Props {
   projects: Project[] | null; prefs: Preferences; busy: number;
   onPrefs: (prefs: Preferences) => void; onImport: (files: File[]) => void; onOpen: (project: Project) => void;
-  onUpdate: (project: Project) => void; onRemove: (ids: string[]) => Promise<void>; onSettings: () => void;
+  onUpdate: (project: Project) => void; onRemove: (ids: string[]) => Promise<void>; onSettings: () => void; onExport: (project: Project) => void;
 }
 
-export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUpdate, onRemove, onSettings }: Props) {
+export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUpdate, onRemove, onSettings, onExport }: Props) {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -71,7 +71,7 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
           <div className="page-head-main"><h1>{title}</h1>{!empty && <span className="head-sub num">{items.length}枚</span>}</div>
           <div className="head-actions">
             {!empty && <label className="search"><Search size={14} aria-hidden="true"/><input type="search" value={query} placeholder="名前で検索" aria-label="名前で検索" onChange={e => setQuery(e.target.value)}/>{query && <button type="button" className="search-clear" aria-label="検索をクリア" onClick={() => setQuery('')}><X size={13}/></button>}</label>}
-            <button type="button" className="btn primary" onClick={() => void pickImages().then(files => files.length && onImport(files))}><ImagePlus size={16} aria-hidden="true"/>画像を開く</button>
+            <button type="button" className="btn primary" onClick={() => void pickImages(true).then(files => files.length && onImport(files))}><ImagePlus size={16} aria-hidden="true"/>画像を開く</button>
           </div>
         </header>
         {!empty && <div className="toolbar">
@@ -79,16 +79,16 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
           <Segmented label="表示" value={prefs.layout} onChange={layout => onPrefs({ ...prefs, layout })} options={[{ value: 'grid', label: <LayoutGrid size={15} aria-label="グリッド"/>, title: 'グリッド' }, { value: 'list', label: <List size={15} aria-label="リスト"/>, title: 'リスト' }]}/>
         </div>}
         <div className="glass-scroll">
-          {projects === null ? null : empty ? <EmptyState onPick={() => void pickImages().then(files => files.length && onImport(files))}/>
+          {projects === null ? null : empty ? <EmptyState onPick={() => void pickImages(true).then(files => files.length && onImport(files))}/>
             : items.length === 0 ? <div className="empty"><div><Search size={30} aria-hidden="true"/><h3>見つかりませんでした</h3><p>{query ? `「${query}」に一致する画像はありません。` : 'まだ画像がありません。'}</p></div></div>
             : <ul className={prefs.layout === 'grid' ? 'project-grid' : 'project-list'}>
-              {items.map(project => <ProjectCard key={project.id} project={project} onOpen={() => onOpen(project)} onFavorite={() => onUpdate({ ...project, favorite: !project.favorite })} onRename={() => setRenaming(project)} onDelete={() => setDeleting(project)}/>)}
+              {items.map(project => <ProjectCard key={project.id} project={project} onOpen={() => onOpen(project)} onFavorite={() => onUpdate({ ...project, favorite: !project.favorite })} onRename={() => setRenaming(project)} onDelete={() => setDeleting(project)} onExport={() => onExport(project)}/>)}
             </ul>}
         </div>
       </div>
     </main>
     {busy > 0 && <div className="importing" role="status"><span className="spinner" aria-hidden="true"/><div><strong>読み込み中…</strong><span>残り{busy}枚</span></div></div>}
-    {dragging && <div className="drop-overlay" aria-hidden="true"><div><Upload size={30}/><strong>ドロップして追加</strong><span>PNG・JPEG・WebP・AVIF・GIF・BMP</span></div></div>}
+    {dragging && <div className="drop-overlay" aria-hidden="true"><div><Upload size={30}/><strong>ドロップして追加</strong><span>PNG・JPEG・WebP・AVIF・GIF・BMP・PSD・Imagee プロジェクト</span></div></div>}
     {renaming && <RenameDialog project={renaming} onClose={() => setRenaming(null)} onSave={name => { onUpdate({ ...renaming, name }); setRenaming(null); }}/>}
     {deleting && <Modal title="画像を削除" onClose={() => setDeleting(null)}>
       <p className="modal-text">「{deleting.name}」をライブラリから削除します。元のファイルは削除されません。</p>
@@ -114,7 +114,7 @@ function useObjectUrl(blob?: Blob) {
   return url;
 }
 
-function ProjectCard({ project, onOpen, onFavorite, onRename, onDelete }: { project: Project; onOpen: () => void; onFavorite: () => void; onRename: () => void; onDelete: () => void }) {
+function ProjectCard({ project, onOpen, onFavorite, onRename, onDelete, onExport }: { project: Project; onOpen: () => void; onFavorite: () => void; onRename: () => void; onDelete: () => void; onExport: () => void }) {
   const url = useObjectUrl(project.thumbnail);
   const [menu, setMenu] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
@@ -134,6 +134,7 @@ function ProjectCard({ project, onOpen, onFavorite, onRename, onDelete }: { proj
       <IconButton icon={MoreHorizontal} label="その他" size={16} onClick={() => setMenu(!menu)}/>
       {menu && <div className="menu" role="menu">
         <button type="button" role="menuitem" onClick={() => { setMenu(false); onRename(); }}><Pencil size={15} aria-hidden="true"/>名前を変更</button>
+        <button type="button" role="menuitem" onClick={() => { setMenu(false); onExport(); }}><PackageOpen size={15} aria-hidden="true"/>プロジェクトとして保存（.imagee）</button>
         <button type="button" role="menuitem" className="danger" onClick={() => { setMenu(false); onDelete(); }}><Trash2 size={15} aria-hidden="true"/>削除</button>
       </div>}
     </div>

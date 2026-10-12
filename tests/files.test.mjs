@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { baseName, exportName, formatBytes, isImageFile, scaledSize, visibleProjects } from '../src/lib/files.mjs';
+import { baseName, exportName, fileKind, formatBytes, isImageFile, scaledSize, visibleProjects } from '../src/lib/files.mjs';
 import { normalizePreferences, defaults } from '../src/lib/preferences.mjs';
 
 test('isImageFile accepts raster images and rejects others', () => {
@@ -39,4 +39,12 @@ test('visibleProjects filters, searches and sorts', () => {
 test('normalizePreferences rejects invalid values', () => {
   assert.deepEqual(normalizePreferences(null), defaults);
   assert.deepEqual(normalizePreferences({ theme: 'blue', layout: 'list', motion: false }), { ...defaults, layout: 'list', motion: false });
+});
+
+test('fileKind routes projects, Photoshop documents and images', () => {
+  assert.equal(fileKind({ name: 'a.imagee', type: '' }), 'imagee');
+  assert.equal(fileKind({ name: 'a.psd', type: 'image/vnd.adobe.photoshop' }), 'psd');
+  assert.equal(fileKind({ name: 'a.png', type: 'image/png' }), 'image');
+  assert.equal(fileKind({ name: 'a.txt', type: 'text/plain' }), null);
+  assert.ok(!isImageFile({ name: 'a.psd', type: 'image/vnd.adobe.photoshop' }));
 });

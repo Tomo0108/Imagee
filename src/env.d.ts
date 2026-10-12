@@ -3,7 +3,7 @@ interface NativeImage { name: string; type: string; bytes: Uint8Array; lastModif
 interface Window {
   imagee?: {
     platform: string;
-    pickImages(): Promise<NativeImage[]>;
+    pickImages(projects?: boolean): Promise<NativeImage[]>;
     takeLaunchImages(): Promise<NativeImage[]>;
     saveImage(name: string, bytes: Uint8Array, extension: string): Promise<string | null>;
     onOpenImages(callback: () => void): () => void;

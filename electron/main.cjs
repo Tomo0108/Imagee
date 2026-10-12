@@ -3,14 +3,17 @@ const { basename, extname, isAbsolute, join } = require('node:path');
 const fs = require('node:fs/promises');
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'bmp'];
-const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', avif: 'image/avif', gif: 'image/gif', bmp: 'image/bmp' };
+// Photoshop documents and Imagee projects open in the library too.
+const OPEN_EXTENSIONS = [...IMAGE_EXTENSIONS, 'psd', 'imagee'];
+const SAVE_EXTENSIONS = [...OPEN_EXTENSIONS, 'zip'];
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', avif: 'image/avif', gif: 'image/gif', bmp: 'image/bmp', psd: 'image/vnd.adobe.photoshop', imagee: 'application/x-imagee' };
 const MAX_BYTES = 512 * 1024 * 1024;
 let win;
 let pendingPaths = [];
 
 if (!app.isPackaged && process.env.IMAGEE_TEST_USER_DATA) app.setPath('userData', process.env.IMAGEE_TEST_USER_DATA);
 
-function isImagePath(file) { return typeof file === 'string' && isAbsolute(file) && IMAGE_EXTENSIONS.includes(extname(file).slice(1).toLowerCase()); }
+function isImagePath(file) { return typeof file === 'string' && isAbsolute(file) && OPEN_EXTENSIONS.includes(extname(file).slice(1).toLowerCase()); }
 async function readImages(paths) {
   const files = [];
   for (const file of paths.filter(isImagePath).slice(0, 200)) {
@@ -55,13 +58,14 @@ openPaths(process.argv.slice(1));
 
 app.whenReady().then(() => {
   createWindow();
-  register('pick-images', async () => {
-    const result = await dialog.showOpenDialog(win, { title: '画像を開く', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }] });
+  register('pick-images', async projects => {
+    const filters = projects ? [{ name: '画像・PSD・Imagee プロジェクト', extensions: OPEN_EXTENSIONS }] : [{ name: 'Images', extensions: IMAGE_EXTENSIONS }];
+    const result = await dialog.showOpenDialog(win, { title: '画像を開く', properties: ['openFile', 'multiSelections'], filters });
     return result.canceled ? [] : readImages(result.filePaths);
   });
   register('take-launch-images', async () => { const paths = pendingPaths; pendingPaths = []; return readImages(paths); });
   register('save-image', async (suggestedName, bytes, extension) => {
-    if (typeof suggestedName !== 'string' || !(bytes instanceof Uint8Array) || !IMAGE_EXTENSIONS.includes(extension)) throw new Error('Invalid export');
+    if (typeof suggestedName !== 'string' || !(bytes instanceof Uint8Array) || !SAVE_EXTENSIONS.includes(extension)) throw new Error('Invalid export');
     const result = await dialog.showSaveDialog(win, { title: '書き出し', defaultPath: basename(suggestedName), filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
     if (result.canceled || !result.filePath) return null;
     await fs.writeFile(result.filePath, bytes);

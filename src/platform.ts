@@ -1,17 +1,18 @@
-import { isImageFile } from './lib/files.mjs';
+import { fileKind, isImageFile, OPEN_ACCEPT } from './lib/files.mjs';
 
 export const native = window.imagee;
 export const platform = native?.platform === 'darwin' ? 'mac' : native?.platform === 'win32' ? 'win' : 'web';
 
 function toFile(image: NativeImage) { return new File([image.bytes as Uint8Array<ArrayBuffer>], image.name, { type: image.type, lastModified: image.lastModified }); }
 
-/** Opens the system picker. Native builds use the OS dialog; the web uses a file input. */
-export function pickImages(): Promise<File[]> {
-  if (native) return native.pickImages().then(images => images.map(toFile));
+/** Opens the system picker. Native builds use the OS dialog; the web uses a file input.
+ *  With `projects`, PSD files and Imagee projects can be picked too. */
+export function pickImages(projects = false): Promise<File[]> {
+  if (native) return native.pickImages(projects).then(images => images.map(toFile));
   return new Promise(resolve => {
     const input = document.createElement('input');
-    input.type = 'file'; input.multiple = true; input.accept = 'image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp';
-    input.onchange = () => resolve([...(input.files || [])].filter(isImageFile));
+    input.type = 'file'; input.multiple = true; input.accept = projects ? OPEN_ACCEPT : 'image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp';
+    input.onchange = () => resolve([...(input.files || [])].filter(file => projects ? fileKind(file) : isImageFile(file)));
     input.oncancel = () => resolve([]);
     input.click();
   });
@@ -37,7 +38,7 @@ export function onLaunchImages(callback: (files: File[]) => void): () => void {
   }
   window.launchQueue?.setConsumer(async ({ files }) => {
     const opened = await Promise.all(files.map(handle => handle.getFile()));
-    if (opened.length) callback(opened.filter(isImageFile));
+    if (opened.length) callback(opened.filter(file => fileKind(file)));
   });
   return () => {};
 }

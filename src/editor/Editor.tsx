@@ -19,12 +19,12 @@ import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from 
 import { ExportSheet } from './ExportSheet';
 import { AdjustPanel, HistoryPanel, InfoPanel, LayersPanel, type LayerActions } from './panels';
 import { loadSettings, storeSettings, ToolOptions, ToolRail, type ToolSettings } from './toolbar';
-import { pickFile, pickImages } from '../platform';
+import { pickFile, pickImages, saveBlob } from '../platform';
 import { NEUTRAL_COLOR, parseCube, type ColorOps } from '../lib/color.mjs';
 import { addLut, readLuts, removeLut } from '../store';
 import { loadUserPresets, storeUserPresets, type UserPreset } from './color-ui';
 import type { Histogram } from '../imaging';
-import { isImageFile } from '../lib/files.mjs';
+import { exportName, isImageFile } from '../lib/files.mjs';
 import { IconButton, Slider, mod } from '../ui';
 
 type Tab = 'adjust' | 'layers' | 'history' | 'info';
@@ -198,7 +198,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   const savedKeys = useRef('');
   const savePixels = useCallback(() => {
     const d = historyRef.current?.present;
-    if (!d) return;
+    if (!d) return saving.current;
     const keys: [string, number][] = [];
     for (const layer of d.layers) {
       if (layer.kind === 'raster') keys.push([layer.id, layer.rev]);
@@ -206,7 +206,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     }
     const changed = keys.filter(([key, rev]) => store.saved.get(key) !== rev && store.rev(key) === rev);
     const keep = keys.map(([key]) => key).sort().join('\n');
-    if (!changed.length && keep === savedKeys.current) return;
+    if (!changed.length && keep === savedKeys.current) return saving.current;
     saving.current = saving.current.then(async () => {
       const blobs = new Map<string, Blob>();
       for (const [key] of changed) blobs.set(key, await toBlob(store.get(key)!, 'image/png'));
@@ -214,7 +214,21 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       for (const [key, rev] of changed) store.saved.set(key, rev);
       savedKeys.current = keep;
     }).catch(() => onToast('描画内容を保存できませんでした。空き容量を確認してください。'));
+    return saving.current;
   }, [store, onToast]);
+  /** Saves the document with its layers: as a PSD, or as an Imagee project file. */
+  const saveProject = useCallback(async (kind: 'psd' | 'imagee') => {
+    const d = historyRef.current?.present;
+    if (!d) return;
+    try {
+      const io = await import('../io/projects');
+      let blob: Blob;
+      if (kind === 'psd') blob = await io.exportPsd(d, store, cache, adjuster.canvas);
+      else { await savePixels(); blob = await io.exportStoredProject({ ...projectRef.current, edits: savedEdits(d) }); }
+      const saved = await saveBlob(blob, exportName(projectRef.current.name, kind), kind, kind === 'psd' ? 'Photoshop ドキュメント' : 'Imagee プロジェクト');
+      if (saved) onToast(`「${saved}」を保存しました。`);
+    } catch (e) { onToast((e as Error).message || '保存できませんでした。'); }
+  }, [store, cache, adjuster, savePixels, onToast]);
   useEffect(() => {
     if (!doc) return;
     const timer = setTimeout(savePixels, 1000);
@@ -900,7 +914,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         </div>
       </aside>
     </div>
-    {exporting && version > 0 && <ExportSheet doc={doc} image={adjuster.canvas} name={project.name} onClose={() => setExporting(false)} onToast={onToast}/>}
+    {exporting && version > 0 && <ExportSheet doc={doc} image={adjuster.canvas} name={project.name} onClose={() => setExporting(false)} onToast={onToast} onProject={saveProject}/>}
   </div>;
 }
 

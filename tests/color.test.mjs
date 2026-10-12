@@ -65,3 +65,11 @@ test('normalizeColor fills gaps and clamps', () => {
   assert.deepEqual(ops.lut, { id: 'x', amount: 100 });
   assert.equal(ops.hsl.red.h, 0);
 });
+
+test('cube text round-trips', async () => {
+  const { cubeText } = await import('../src/lib/color.mjs');
+  const cube = { size: 2, title: 'A "b"', data: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0.5]) };
+  const back = parseCube(cubeText(cube));
+  assert.equal(back.size, 2); assert.equal(back.title, "A 'b'");
+  assert.deepEqual([...back.data], [...cube.data]);
+});

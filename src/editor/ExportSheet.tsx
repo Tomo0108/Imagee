@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, ShieldCheck } from 'lucide-react';
+import { Download, Layers, PackageOpen, ShieldCheck } from 'lucide-react';
 import { EXPORT_FORMATS, exportName, formatBytes, scaledSize, type ExportFormat } from '../lib/files.mjs';
 import { canvas, supportsAvif, toBlob } from '../imaging';
 import { saveBlob } from '../platform';
@@ -21,7 +21,9 @@ async function render(doc: Doc, image: HTMLCanvasElement, format: (typeof EXPORT
   return blob;
 }
 
-export function ExportSheet({ doc, image, name, onClose, onToast }: { doc: Doc; image: HTMLCanvasElement; name: string; onClose: () => void; onToast: (message: string) => void }) {
+export function ExportSheet({ doc, image, name, onClose, onToast, onProject }: { doc: Doc; image: HTMLCanvasElement; name: string; onClose: () => void; onToast: (message: string) => void; onProject?: (kind: 'psd' | 'imagee') => Promise<void> }) {
+  const [packing, setPacking] = useState<'psd' | 'imagee' | null>(null);
+  const pack = async (kind: 'psd' | 'imagee') => { setPacking(kind); try { await onProject?.(kind); } finally { setPacking(null); } };
   const [formatId, setFormatId] = useState<ExportFormat>('png');
   const [quality, setQuality] = useState(88);
   const [percent, setPercent] = useState(100);
@@ -67,6 +69,13 @@ export function ExportSheet({ doc, image, name, onClose, onToast }: { doc: Doc; 
       {estimate && 'error' in estimate && <p className="notice">{estimate.error}</p>}
       {!format.alpha && <p className="setting-note">JPEG は透明部分を白で塗りつぶします。</p>}
       <p className="setting-note with-icon"><ShieldCheck size={15} aria-hidden="true"/>位置情報などのメタデータは書き出した画像に含まれません。</p>
+      {onProject && <div className="export-projects">
+        <div><strong>レイヤーを残して保存</strong><span>PSD はテキスト・図形を画像として保存します。.imagee はすべてを編集できる状態で保存します。</span></div>
+        <div className="export-project-buttons">
+          <button type="button" className="btn" disabled={!!packing} onClick={() => void pack('psd')}><Layers size={15} aria-hidden="true"/>{packing === 'psd' ? '保存中…' : 'PSD'}</button>
+          <button type="button" className="btn" disabled={!!packing} onClick={() => void pack('imagee')}><PackageOpen size={15} aria-hidden="true"/>{packing === 'imagee' ? '保存中…' : '.imagee'}</button>
+        </div>
+      </div>}
     </div>
     <div className="modal-actions"><button type="button" className="btn" onClick={onClose}>キャンセル</button><button type="button" className="btn primary" disabled={saving || (estimate !== null && 'error' in estimate)} onClick={() => void save()}><Download size={16} aria-hidden="true"/>{saving ? '書き出し中…' : '書き出す'}</button></div>
   </Modal>;
