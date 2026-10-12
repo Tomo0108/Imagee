@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Imagee",
+  "short_name": "Imagee",
+  "description": "Private, local-first image editor",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1c1c20",
+  "theme_color": "#1c1c20",
+  "categories": ["photo", "graphics"],
+  "icons": [],
+  "file_handlers": [
+    { "action": "./", "accept": { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".bmp"] } }
+  ]
+}
