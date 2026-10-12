@@ -353,6 +353,7 @@ html[data-platform="mac"] .sidebar { padding-top: 40px; }
 .ai-upscale-buttons { grid-column: 2; display: flex; gap: 6px; }
 .ai-upscale-buttons .btn { flex: 1; justify-content: center; }
 .ai-busy { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 4px; border-radius: var(--radius); background: color-mix(in srgb, var(--a1) 14%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--a1) 40%, transparent); }
+.ai-chip { position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; border-radius: 999px; font-size: var(--type-caption); background: var(--glass-thick); backdrop-filter: blur(20px); box-shadow: 0 6px 24px rgba(0, 0, 0, .3), inset 0 0 0 .5px var(--surface-edge); white-space: nowrap; }
 .ai-busy strong { display: block; font-size: var(--type-callout); font-weight: 600; margin-bottom: 6px; }
 .ai-busy .meter > i { background: var(--a1); transition: width .2s var(--ease); }
 .panel-note.with-icon { display: flex; gap: 6px; align-items: flex-start; }

@@ -70,7 +70,7 @@ export default function App() {
     void updateProject(project).catch(() => setToast('変更を保存できませんでした。空き容量を確認してください。'));
   }, []);
   const remove = useCallback(async (ids: string[]) => {
-    await removeProjects(ids);
+    try { await removeProjects(ids); } catch (e) { setToast((e as Error).message || '削除できませんでした。'); return; }
     setProjects(current => current?.filter(item => !ids.includes(item.id)) || null);
     setToast(ids.length > 1 ? `${ids.length}件を削除しました。` : '削除しました。');
   }, []);

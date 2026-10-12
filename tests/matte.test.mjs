@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boxMean, canUpscale, guidedFilter, normalize, resizeMap, segmentInput, skyMask, tiles } from '../src/lib/matte.mjs';
+import { bleed, boxMean, canUpscale, guidedFilter, normalize, resizeMap, segmentInput, skyMask, tiles } from '../src/lib/matte.mjs';
 
 test('segmentInput is planar and ImageNet-normalised', () => {
   const rgba = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]);
@@ -56,4 +56,16 @@ test('tiles cover the image exactly once in their inner parts', () => {
 test('canUpscale limits the 4× intermediate', () => {
   assert.equal(canUpscale(1000, 1000), true);
   assert.equal(canUpscale(4000, 3000), false);
+});
+
+test('bleed fills transparent colour from visible pixels and keeps alpha and opaque pixels', () => {
+  const w = 8, h = 4, rgba = new Uint8ClampedArray(w * h * 4);
+  // Left half opaque red, right half fully transparent black.
+  for (let y = 0; y < h; y++) for (let x = 0; x < 4; x++) rgba.set([200, 10, 10, 255], (y * w + x) * 4);
+  const out = bleed(rgba, w, h);
+  for (let i = 0; i < w * h; i++) {
+    assert.equal(out[i * 4 + 3], rgba[i * 4 + 3], 'alpha unchanged');
+    assert.ok(Math.abs(out[i * 4] - 200) <= 1 && out[i * 4 + 1] <= 11, `pixel ${i} takes the visible colour`);
+  }
+  assert.deepEqual([...bleed(new Uint8ClampedArray(16), 2, 2)], new Array(16).fill(0), 'all transparent stays as is');
 });

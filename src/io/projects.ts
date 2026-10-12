@@ -91,41 +91,67 @@ function alphaToGrey(source: HTMLCanvasElement) {
   return out;
 }
 
+interface PsdMask { canvas?: HTMLCanvasElement; left?: number; top?: number; defaultColor?: number; disabled?: boolean }
 interface PsdLayerLike {
   name?: string; hidden?: boolean; opacity?: number; blendMode?: string; left?: number; top?: number; canvas?: HTMLCanvasElement;
-  children?: PsdLayerLike[]; mask?: { canvas?: HTMLCanvasElement; left?: number; top?: number; defaultColor?: number; disabled?: boolean };
+  clipping?: boolean; children?: PsdLayerLike[]; mask?: PsdMask;
 }
 
-/** Reads a PSD into a project: each pixel layer becomes a raster layer (groups are flattened, text is kept as pixels). */
+/** Reads a PSD into a project: each pixel layer becomes a raster layer (text is kept as pixels).
+ *  Groups are flattened; a group's mask and a clipping mask carry over into each affected layer's own mask. */
 export async function importPsd(file: File): Promise<ImportedProject> {
   const { readPsd } = await import('ag-psd');
   let psd;
   try { psd = readPsd(await file.arrayBuffer(), { skipThumbnail: true }); } catch { throw new Error(`「${file.name}」は PSD として読み込めませんでした。`); }
   const { width, height } = psd;
   const pixels = new Map<string, Blob>(), layers: RasterLayer[] = [];
-  const visit = async (items: PsdLayerLike[], visible: boolean, opacity: number) => {
+  /** A PSD mask as one of ours: full size, visibility in alpha. */
+  const maskOf = (m: PsdMask) => {
+    const mask = canvas(width, height), c = mask.getContext('2d')!;
+    const base = m.defaultColor ?? 0;
+    c.fillStyle = `rgb(${base},${base},${base})`; c.fillRect(0, 0, width, height);
+    c.drawImage(m.canvas!, m.left ?? 0, m.top ?? 0);
+    greyToAlpha(mask);
+    return mask;
+  };
+  /** The visible part common to every shape given (by alpha), as a new white mask. */
+  const intersect = (...shapes: (HTMLCanvasElement | null)[]) => {
+    const list = shapes.filter((shape): shape is HTMLCanvasElement => !!shape);
+    if (!list.length) return null;
+    const mask = canvas(width, height), c = mask.getContext('2d')!;
+    c.fillStyle = '#fff'; c.fillRect(0, 0, width, height);
+    c.globalCompositeOperation = 'destination-in';
+    for (const shape of list) c.drawImage(shape, 0, 0);
+    return mask;
+  };
+  const visit = async (items: PsdLayerLike[], visible: boolean, opacity: number, inherited: HTMLCanvasElement | null) => {
+    // The layer that following clipped layers are clipped to: its pixels and mask.
+    let base: { surface: HTMLCanvasElement; mask: HTMLCanvasElement | null } | null = null;
     for (const item of items) {
       const shown = visible && !item.hidden, alpha = opacity * (item.opacity ?? 1);
-      if (item.children) { await visit(item.children, shown, alpha); continue; }
+      const own = item.mask?.canvas && !item.mask.disabled ? maskOf(item.mask) : null;
+      if (item.children) { await visit(item.children, shown, alpha, own ? intersect(inherited, own) : inherited); base = null; continue; }
       if (!item.canvas) continue;
       const id = newLayerId();
       const surface = canvas(width, height);
       surface.getContext('2d')!.drawImage(item.canvas, item.left ?? 0, item.top ?? 0);
       pixels.set(id, await toBlob(surface, 'image/png'));
       const layer: RasterLayer = { kind: 'raster', id, name: item.name || `レイヤー ${layers.length + 1}`, visible: shown, opacity: Math.round(alpha * 100), blend: PSD_BLEND[item.blendMode || 'normal'] || 'source-over', x: 0, y: 0, rev: 0 };
-      if (item.mask?.canvas) {
-        const mask = canvas(width, height), c = mask.getContext('2d')!;
-        const base = item.mask.defaultColor ?? 0;
-        c.fillStyle = `rgb(${base},${base},${base})`; c.fillRect(0, 0, width, height);
-        c.drawImage(item.mask.canvas, item.mask.left ?? 0, item.mask.top ?? 0);
-        greyToAlpha(mask);
+      const clip = item.clipping && base ? [base.surface, base.mask] : [];
+      const mask = intersect(own, inherited, ...clip);
+      if (mask) {
         pixels.set(maskKey(id), await toBlob(mask, 'image/png'));
-        layer.mask = { rev: 0, enabled: !item.mask.disabled };
+        layer.mask = { rev: 0, enabled: true };
+      } else if (item.mask?.canvas) {
+        // A switched-off mask is kept, still switched off.
+        pixels.set(maskKey(id), await toBlob(maskOf(item.mask), 'image/png'));
+        layer.mask = { rev: 0, enabled: false };
       }
+      if (!item.clipping) base = { surface, mask: intersect(own, inherited) };
       layers.push(layer);
     }
   };
-  await visit((psd.children || []) as PsdLayerLike[], true, 1);
+  await visit((psd.children || []) as PsdLayerLike[], true, 1, null);
   let composite = psd.canvas as HTMLCanvasElement | undefined;
   if (!composite) {
     composite = canvas(width, height);

@@ -41,7 +41,16 @@ export class PixelStore {
     surface.rev = rev;
     return rev;
   }
-  /** Moves a surface to the revision the document points at (undo, redo, history jumps). Returns the area that changed. */
+  /** Frees what no document state can return to: surfaces of layers gone from the whole history,
+   *  and undo steps older than the oldest revision still referenced. `referenced` maps surface keys to revisions. */
+  prune(referenced: Map<string, Set<number>>) {
+    for (const [key, surface] of this.surfaces) {
+      const revs = referenced.get(key);
+      if (!revs) { surface.canvas.width = surface.canvas.height = 0; this.surfaces.delete(key); this.saved.delete(key); continue; }
+      surface.chain.prune(new Set([...revs, surface.rev]));
+    }
+  }
+    /** Moves a surface to the revision the document points at (undo, redo, history jumps). Returns the area that changed. */
   sync(key: string, rev: number): Box | null {
     const surface = this.surfaces.get(key);
     if (!surface || surface.rev === rev || !surface.chain.has(rev)) return null;

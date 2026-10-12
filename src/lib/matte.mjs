@@ -134,3 +134,48 @@ export function tiles(width, height, size, overlap) {
 
 /** Largest upscale the device can hold: the 4× intermediate is capped at `maxPixels`. @param {number} w @param {number} h */
 export function canUpscale(w, h, maxPixels = 48e6) { return w * h * 16 <= maxPixels && w * 4 <= 32767 && h * 4 <= 32767; }
+
+/** Fills the colour of transparent pixels with that of their nearest visible neighbours (pull-push), keeping alpha.
+ *  Models that ignore alpha then see no black halo around cut-outs.
+ * @param {Uint8ClampedArray} rgba @param {number} w @param {number} h @returns {Uint8ClampedArray} */
+export function bleed(rgba, w, h) {
+  // Pull: a pyramid of coverage-weighted average colours; each level's coverage is capped at 1.
+  const levels = [];
+  let width = w, height = h;
+  let color = new Float32Array(w * h * 3), cover = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const a = rgba[i * 4 + 3] / 255;
+    cover[i] = a;
+    for (let k = 0; k < 3; k++) color[i * 3 + k] = rgba[i * 4 + k];
+  }
+  levels.push({ width, height, color, cover });
+  while (width > 1 || height > 1) {
+    const nw = Math.ceil(width / 2), nh = Math.ceil(height / 2);
+    const sum = new Float32Array(nw * nh * 3), weight = new Float32Array(nw * nh);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const i = y * width + x, j = (y >> 1) * nw + (x >> 1), a = cover[i];
+      if (!a) continue;
+      weight[j] += a;
+      for (let k = 0; k < 3; k++) sum[j * 3 + k] += color[i * 3 + k] * a;
+    }
+    for (let j = 0; j < nw * nh; j++) {
+      if (weight[j]) for (let k = 0; k < 3; k++) sum[j * 3 + k] /= weight[j];
+      weight[j] = Math.min(1, weight[j]);
+    }
+    width = nw; height = nh; color = sum; cover = weight;
+    levels.push({ width, height, color, cover });
+  }
+  // Push: each level blends its own colour over its parent's by coverage.
+  for (let l = levels.length - 2; l >= 0; l--) {
+    const level = levels[l], parent = levels[l + 1];
+    for (let y = 0; y < level.height; y++) for (let x = 0; x < level.width; x++) {
+      const i = y * level.width + x, j = (y >> 1) * parent.width + (x >> 1), a = level.cover[i];
+      if (a >= 1) continue;
+      for (let k = 0; k < 3; k++) level.color[i * 3 + k] = level.color[i * 3 + k] * a + parent.color[j * 3 + k] * (1 - a);
+    }
+  }
+  const out = new Uint8ClampedArray(rgba);
+  const top = levels[0].color;
+  for (let i = 0; i < w * h; i++) if (rgba[i * 4 + 3] < 255) for (let k = 0; k < 3; k++) out[i * 4 + k] = Math.round(top[i * 3 + k]);
+  return out;
+}

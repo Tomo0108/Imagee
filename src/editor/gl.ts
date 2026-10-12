@@ -59,6 +59,13 @@ export class Adjuster {
 
   get accelerated() { return !!this.gl; }
 
+  /** Frees the GPU context now rather than whenever the browser gets to it (browsers cap how many can be open). */
+  dispose() {
+    this.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    this.gl = null; this.sourceData = null; this.source = null;
+    this.canvas.width = this.canvas.height = 1;
+  }
+
   private init(gl: WebGL2RenderingContext) {
     const compile = (type: number, source: string) => { const shader = gl.createShader(type)!; gl.shaderSource(shader, source); gl.compileShader(shader); return gl.getShaderParameter(shader, gl.COMPILE_STATUS) ? shader : null; };
     const vertex = compile(gl.VERTEX_SHADER, VERTEX), fragment = compile(gl.FRAGMENT_SHADER, FRAGMENT);

@@ -1,6 +1,6 @@
 // On-device AI tools: subject and sky masks, object removal and upscaling. Everything runs locally in workers.
 import { canvas } from '../imaging';
-import { canUpscale, guidedFilter, luminance, normalize, resizeMap, skyMask } from '../lib/matte.mjs';
+import { bleed, canUpscale, guidedFilter, luminance, normalize, resizeMap, skyMask } from '../lib/matte.mjs';
 import type { ModelRequest, ModelResponse } from './model.worker';
 
 type Pending = { resolve: (value: never) => void; reject: (error: Error) => void; progress?: (fraction: number) => void };
@@ -109,7 +109,8 @@ export async function upscale(source: HTMLCanvasElement, factor: 2 | 4, progress
   const pixels = c.getImageData(0, 0, width, height).data;
   let opaque = true;
   for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 255) { opaque = false; break; }
-  const copy = new Uint8ClampedArray(pixels);
+  // Transparent pixels carry no colour; spread the visible colours into them so the edges do not darken.
+  const copy = opaque ? new Uint8ClampedArray(pixels) : bleed(pixels, width, height) as Uint8ClampedArray<ArrayBuffer>;
   const result = await models.call<Uint8ClampedArray>({ type: 'upscale', url: modelUrl('upscale-x4.onnx'), pixels: copy, width, height }, [copy.buffer], progress);
   const big = canvas(width * 4, height * 4), bc = big.getContext('2d')!;
   bc.putImageData(new ImageData(result as Uint8ClampedArray<ArrayBuffer>, width * 4, height * 4), 0, 0);

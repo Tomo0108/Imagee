@@ -209,7 +209,7 @@ export function HistoryPanel({ history, onJump }: { history: History<Doc>; onJum
     {list.map((entry, index) => <li key={index}><button type="button" className={`${entry.current ? 'current' : ''}${entry.future ? ' future' : ''}`} aria-current={entry.current ? 'step' : undefined} onClick={() => onJump(index)}>
       <span className="history-dot" aria-hidden="true"/>{entry.label}
     </button></li>)}
-  </ol><p className="panel-note">履歴は回数無制限で、任意の時点に戻れます。描画も含め、編集内容は自動で保存されます。</p></div>;
+  </ol><p className="panel-note">履歴は直近 500 回分を残し、任意の時点に戻れます。描画も含め、編集内容は自動で保存されます。</p></div>;
 }
 
 export function InfoPanel({ project, output, source, version }: { project: Project; output: { width: number; height: number }; source: HTMLCanvasElement | null; version: number }) {

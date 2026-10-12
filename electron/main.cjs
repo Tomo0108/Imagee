@@ -19,7 +19,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: t
 function serveApp() {
   protocol.handle('app', async request => {
     const { host, pathname } = new URL(request.url);
-    const file = normalize(join(DIST, decodeURIComponent(pathname === '/' ? '/index.html' : pathname)));
+    let file;
+    try { file = normalize(join(DIST, decodeURIComponent(pathname === '/' ? '/index.html' : pathname))); } catch { return new Response('Not found', { status: 404 }); }
     if (host !== 'imagee' || (file !== DIST && !file.startsWith(DIST + sep))) return new Response('Not found', { status: 404 });
     const response = await net.fetch(pathToFileURL(file).toString()).catch(() => null);
     if (!response || !response.ok) return new Response('Not found', { status: 404 });
@@ -28,6 +29,7 @@ function serveApp() {
     headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
     headers.set('Cross-Origin-Resource-Policy', 'same-origin');
     if (file.endsWith('.wasm')) headers.set('Content-Type', 'application/wasm');
+    if (file.endsWith('.webmanifest')) headers.set('Content-Type', 'application/manifest+json');
     if (file.endsWith('.mjs') || file.endsWith('.js')) headers.set('Content-Type', 'text/javascript');
     return new Response(response.body, { status: 200, headers });
   });
@@ -58,7 +60,9 @@ function openPaths(paths) {
   const images = paths.filter(isImagePath);
   if (!images.length) return;
   pendingPaths.push(...images);
-  if (win && !win.webContents.isLoading()) win.webContents.send('open-paths');
+  // The renderer takes pending files when it starts, so a message sent too early is harmless.
+  if (win) win.webContents.send('open-paths');
+  else if (app.isReady()) createWindow();
 }
 function createWindow() {
   win = new BrowserWindow({
@@ -67,6 +71,7 @@ function createWindow() {
     icon: join(DIST, 'icons/icon-512.png'),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  win.on('closed', () => { win = null; });
   win.setMenuBarVisibility(false);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
@@ -75,7 +80,11 @@ function createWindow() {
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', (_event, argv) => { openPaths(argv.slice(1)); if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+app.on('second-instance', (_event, argv) => {
+  openPaths(argv.slice(1));
+  if (!win && app.isReady()) createWindow();
+  if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+});
 app.on('open-file', (event, file) => { event.preventDefault(); openPaths([file]); });
 openPaths(process.argv.slice(1));
 

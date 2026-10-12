@@ -37,3 +37,8 @@ test('inpaint fills a hole in a smooth gradient smoothly', () => {
   for (let y = 20; y < 40; y++) for (let x = 20; x < 40; x++) { const i = (y * w + x) * 4; error += Math.abs(out[i] - data[i]) + Math.abs(out[i + 1] - data[i + 1]); }
   assert.ok(error / 800 < 20, `mean error ${error / 800}`);
 });
+
+test('inpaint refuses a hole with nothing around it to borrow from', () => {
+  const weights = new Float32Array(16 * 16).fill(1);
+  assert.throws(() => inpaint(stripes(16, 16), 16, 16, weights), /参照できる部分がない/);
+});

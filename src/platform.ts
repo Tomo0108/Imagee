@@ -53,8 +53,10 @@ export async function saveBlob(blob: Blob, name: string, extension: string, desc
       await writable.write(blob); await writable.close();
       return handle.name;
     } catch (error) {
-      if ((error as DOMException).name === 'AbortError') return null;
-      throw error;
+      const reason = (error as DOMException).name;
+      if (reason === 'AbortError') return null;
+      // The picker can be refused (inside a frame, or after a long encode used up the click); a plain download still works.
+      if (reason !== 'SecurityError' && reason !== 'NotAllowedError' && reason !== 'TypeError') throw error;
     }
   }
   const url = URL.createObjectURL(blob);

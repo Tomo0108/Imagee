@@ -36,7 +36,8 @@ export function BatchDialog({ projects, initial, onClose, onToast }: { projects:
   const abort = useRef<AbortController | null>(null);
   const userPresets = useMemo(loadUserPresets, []);
   const edited = useMemo(() => projects.filter(p => p.edits), [projects]);
-  useEffect(() => { void supportsAvif().then(setAvif); }, []);
+  // A saved AVIF recipe falls back to JPEG on a browser that cannot encode AVIF.
+  useEffect(() => { void supportsAvif().then(ok => { setAvif(ok); if (!ok) setRecipe(current => current.format === 'avif' ? { ...current, format: 'jpeg' } : current); }); }, []);
   useEffect(() => () => abort.current?.abort(), []);
 
   const set = (patch: Partial<Recipe>) => setRecipe(current => ({ ...current, ...patch }));
@@ -54,7 +55,7 @@ export function BatchDialog({ projects, initial, onClose, onToast }: { projects:
   const pickRecipe = (id: string) => {
     const next = recipes.find(item => item.id === id);
     if (!next) return;
-    setRecipe(next); setTone(next.tone ? 'recipe' : 'none');
+    setRecipe(avif || next.format !== 'avif' ? next : { ...next, format: 'jpeg' }); setTone(next.tone ? 'recipe' : 'none');
   };
   const saveRecipe = () => {
     const name = recipe.name.trim() || `レシピ ${recipes.length + 1}`;
@@ -76,13 +77,13 @@ export function BatchDialog({ projects, initial, onClose, onToast }: { projects:
     try {
       const { runBatch, packOutputs } = await import('../io/batch');
       const cubes = new Map<string, Cube>((await readLuts()).map(lut => [lut.id, { size: lut.size, data: lut.data, title: lut.name }]));
-      const { outputs, failed } = await runBatch(chosen, normalizeRecipe(recipe), cubes, setProgress, controller.signal);
+      const { outputs, failed, error } = await runBatch(chosen, normalizeRecipe(recipe), cubes, setProgress, controller.signal);
       if (controller.signal.aborted) { onToast('一括処理を中止しました。'); setProgress(null); return; }
-      if (!outputs.length) throw new Error('書き出せる画像がありませんでした。');
+      if (!outputs.length) throw new Error(error ? `書き出せる画像がありませんでした。${error}` : '書き出せる画像がありませんでした。');
       const saved = outputs.length === 1
         ? await saveBlob(outputs[0].blob, outputs[0].name, format.extension, format.label)
         : await saveBlob(await packOutputs(outputs), `Imagee-${outputs.length}枚.zip`, 'zip', 'ZIP');
-      if (saved) { onToast(failed.length ? `「${saved}」を保存しました（${failed.length}件は失敗）。` : `「${saved}」を保存しました。`); onClose(); }
+      if (saved) { onToast(failed.length ? `「${saved}」を保存しました（${failed.length}件は失敗: ${error}）。` : `「${saved}」を保存しました。`); onClose(); }
       else setProgress(null);
     } catch (e) { onToast((e as Error).message || '一括処理に失敗しました。'); setProgress(null); }
     finally { abort.current = null; }

@@ -21,6 +21,14 @@ export class RevChain {
   }
   /** @param {number} rev */
   has(rev) { return this.revs.includes(rev); }
+  /** Forgets the steps before the oldest revision still in `keep` (history that fell off the undo limit).
+   * @param {Set<number>} keep @returns {number} how many steps were dropped */
+  prune(keep) {
+    const first = this.revs.findIndex(rev => keep.has(rev));
+    if (first <= 0) return 0;
+    this.revs.splice(0, first); this.patches.splice(0, first);
+    return first;
+  }
   /** Steps that move a surface from revision `from` to `to`.
    * @param {number} from @param {number} to @returns {{ patch: P, forward: boolean }[]} */
   path(from, to) {

@@ -75,7 +75,9 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then TAG="$GITHUB_REF_NAME"; else TAG="v$VERSION"; fi
+          TAG="v$VERSION"
+          # The tag must match the version the apps report.
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION"; exit 1; fi
           FILES=()
           while IFS= read -r file; do FILES+=("$file"); done < <(find dist-apps -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \))
           if [ "${#FILES[@]}" -eq 0 ]; then echo "No app artifacts"; exit 1; fi
@@ -83,7 +85,8 @@ jobs:
           FILES+=("SHA256SUMS.txt")
           NOTES=$'端末の中だけで完結する画像エディタ Imagee のデスクトップ版です。\n\n- Windows: `Imagee-win-setup.exe`\n- macOS（Apple シリコン）: `Imagee-mac-arm64.dmg`\n- macOS（Intel）: `Imagee-mac-x64.dmg`\n\nブラウザ版: https://tomo0108.github.io/Imagee/app/'
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-running a release replaces its files; a new version needs a version bump in package.json.
             gh release upload "$TAG" "${FILES[@]}" --clobber
           else
-            gh release create "$TAG" "${FILES[@]}" --title "Imagee $VERSION" --notes "$NOTES" --generate-notes
+            gh release create "$TAG" "${FILES[@]}" --target "$GITHUB_SHA" --title "Imagee $VERSION" --notes "$NOTES" --generate-notes
           fi

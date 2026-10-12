@@ -11,11 +11,13 @@ export function createMask(store: PixelStore, key: string, width: number, height
 }
 
 /** Opens a library project: decodes the original, then restores painted surfaces into `store`.
- *  Revisions are renumbered for this session. Returns null if `cancelled()` turns true on the way. */
-export async function loadDoc(project: Project, store: PixelStore, cancelled: () => boolean = () => false): Promise<Doc | null> {
+ *  Revisions are renumbered for this session. Returns null if `cancelled()` turns true on the way.
+ *  `original` skips every edit, painting included, for the image as it was imported. */
+export async function loadDoc(project: Project, store: PixelStore, cancelled: () => boolean = () => false, original = false): Promise<Doc | null> {
   const blob = await readSource(project.id);
   if (!blob) throw new Error('元の画像が見つかりません。ライブラリに追加し直してください。');
-  const [bitmap, pixels] = await Promise.all([decode(blob), readPixels(project.id).catch(() => new Map<string, Blob>())]);
+  if (original) project = { ...project, edits: undefined };
+  const [bitmap, pixels] = await Promise.all([decode(blob), original ? new Map<string, Blob>() : readPixels(project.id).catch(() => new Map<string, Blob>())]);
   if (cancelled()) { bitmap.close(); return null; }
   const { width, height } = bitmap;
   const background: RasterLayer = { kind: 'raster', id: 'background', name: '背景', visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: 0 };

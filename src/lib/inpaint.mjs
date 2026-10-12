@@ -34,6 +34,9 @@ export function inpaint(data, width, height, weights, options = {}) {
     hole[t] = weights[s] > 0.05 ? 1 : 0;
   }
   dilate(hole, cw, ch);
+  let known = 0;
+  for (let i = 0; i < hole.length; i++) if (!hole[i]) known++;
+  if (known < (2 * P + 1) ** 2) throw new Error('周りに参照できる部分がないため、埋められません。消したい部分だけを選んでください。');
 
   // Pyramid: halve until the hole is at most a few patches across.
   /** @type {{ image: Float32Array, hole: Uint8Array, w: number, h: number }[]} */

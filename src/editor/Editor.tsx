@@ -5,7 +5,7 @@ import { writePixels } from '../store';
 import { decode, histogram, thumbnail, toBlob, canvas as makeCanvas } from '../imaging';
 import type { Preferences } from '../lib/preferences.mjs';
 import { centered, fitScale, formatZoom, stepZoom, zoomAt, type View } from '../lib/viewport.mjs';
-import { commit, createHistory, jump, redo, undo, type History } from '../lib/history.mjs';
+import { commit, createHistory, jump, LIMIT, redo, undo, type History } from '../lib/history.mjs';
 import { autoAdjust, NEUTRAL, type Adjustments } from '../lib/adjust.mjs';
 import { ASPECTS, autoCrop, fitAspect, flip, IDENTITY, MAX_ANGLE, orientedSize, outputSize, rotateQuarter, type Rect } from '../lib/geometry.mjs';
 import { floodMask } from '../lib/flood.mjs';
@@ -18,6 +18,7 @@ import { Adjuster } from './gl';
 import { createMask, loadDoc } from './load';
 import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from './Stage';
 import { ExportSheet } from './ExportSheet';
+import { renderDocument } from './render';
 import { AdjustPanel, HistoryPanel, InfoPanel, LayersPanel, type LayerActions } from './panels';
 import { loadSettings, storeSettings, ToolOptions, ToolRail, type ToolSettings } from './toolbar';
 import { pickFile, pickImages, saveBlob } from '../platform';
@@ -102,8 +103,25 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   /** Size of the PNG we last put on the system clipboard, so pasting it back lands in place. */
   const clipboardStamp = useRef(0);
   const projectRef = useRef(project); projectRef.current = project;
+  // Free the GPU context when the editor closes (React's development double-mount runs the cleanup and re-mounts at once).
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; setTimeout(() => { if (!mounted.current) adjuster.dispose(); }, 0); };
+  }, [adjuster]);
+  /** The adjusted image at the document's full size; large images are edited on a smaller copy. */
+  const fullImage = useCallback((): HTMLCanvasElement | null => {
+    const d = historyRef.current?.present, source = work.current;
+    if (!d || !source) return null;
+    return source.width === d.width && source.height === d.height ? adjuster.canvas : renderDocument(d, store, cache);
+  }, [adjuster, store, cache]);
 
-  const apply = useCallback((next: History<Doc>) => { historyRef.current = next; setHistory(next); }, []);
+  const pruned = useRef(0);
+  const apply = useCallback((next: History<Doc>) => {
+    historyRef.current = next; setHistory(next);
+    // Once the history is full, every so often drop pixels that no undo step can reach any more.
+    if (next.past.length >= LIMIT && ++pruned.current % 25 === 0) store.prune(surfaceRevisions(next));
+  }, [store]);
   const setSelection = useCallback((next: Selection | null) => { selectionRef.current = next; setSelectionState(next); }, []);
   const setSettings = useCallback((patch: Partial<ToolSettings>) => setSettingsState(current => { const next = { ...current, ...patch }; storeSettings(next); return next; }), []);
 
@@ -163,9 +181,11 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     });
   }, [adjuster, store, cache]);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  // Leaving the editor stops AI work, so a late result cannot change or open anything.
+  useEffect(() => () => cancelAi(), []);
 
   // Autosave: edits as JSON with the project, painted surfaces as PNG in their own store.
-  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.geometry, doc?.selected]); // eslint-disable-line react-hooks/exhaustive-deps
+  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.color, doc?.geometry, doc?.selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const firstEdits = useRef(true);
   useEffect(() => {
     if (!edits) return;
@@ -189,8 +209,11 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     saving.current = saving.current.then(async () => {
       const blobs = new Map<string, Blob>();
       for (const [key] of changed) blobs.set(key, await toBlob(store.get(key)!, 'image/png'));
-      await writePixels(projectRef.current.id, blobs, new Set(keys.map(([key]) => key)));
+      const kept = new Set(keys.map(([key]) => key));
+      await writePixels(projectRef.current.id, blobs, kept);
       for (const [key, rev] of changed) store.saved.set(key, rev);
+      // Surfaces dropped from storage must be written again if an undo brings them back.
+      for (const key of [...store.saved.keys()]) if (!kept.has(key)) store.saved.delete(key);
       savedKeys.current = keep;
     }).catch(() => onToast('描画内容を保存できませんでした。空き容量を確認してください。'));
     return saving.current;
@@ -202,12 +225,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     try {
       const io = await import('../io/projects');
       let blob: Blob;
-      if (kind === 'psd') blob = await io.exportPsd(d, store, cache, adjuster.canvas);
+      if (kind === 'psd') blob = await io.exportPsd(d, store, cache, fullImage() ?? adjuster.canvas);
       else { await savePixels(); blob = await io.exportStoredProject({ ...projectRef.current, edits: savedEdits(d) }); }
       const saved = await saveBlob(blob, exportName(projectRef.current.name, kind), kind, kind === 'psd' ? 'Photoshop ドキュメント' : 'Imagee プロジェクト');
       if (saved) onToast(`「${saved}」を保存しました。`);
     } catch (e) { onToast((e as Error).message || '保存できませんでした。'); }
-  }, [store, cache, adjuster, savePixels, onToast]);
+  }, [store, cache, adjuster, fullImage, savePixels, onToast]);
   useEffect(() => {
     if (!doc) return;
     const timer = setTimeout(savePixels, 1000);
@@ -230,6 +253,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const selectLayer = useCallback((id: string) => {
     const h = historyRef.current;
     if (h && h.present.selected !== id) apply({ ...h, present: { ...h.present, selected: id } });
+    merging.current = null;
     setEditText(false); setEditImage(false);
   }, [apply]);
   /** Records that a surface reached a new revision. When the working composite already shows it, skip recompositing. */
@@ -318,9 +342,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     const k = source.width / d.width;
     const x = Math.floor(p.x * k), y = Math.floor(p.y * k);
     if (x < 0 || y < 0 || x >= source.width || y >= source.height) return null;
-    const [r, g, b, a] = source.getContext('2d')!.getImageData(x, y, 1, 1).data;
+    // Pick what is on screen: the colour after adjustments, curves and LUTs.
+    const pixel = makeCanvas(1, 1), pc = pixel.getContext('2d', { willReadFrequently: true })!;
+    pc.drawImage(adjuster.canvas.width === source.width ? adjuster.canvas : source, x, y, 1, 1, 0, 0, 1, 1);
+    const [r, g, b, a] = pc.getImageData(0, 0, 1, 1).data;
     return a ? rgbToHex(r, g, b) : null;
-  }, []);
+  }, [adjuster]);
   const pickColor = useCallback((p: ToolPointer) => {
     const color = sample(p);
     if (color) setColors(current => p.alt ? [current[0], color] : [color, current[1]]);
@@ -458,9 +485,18 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
           const gradient = settings.gradient === 'linear' ? context.createLinearGradient(a.start.x, a.start.y, a.end.x, a.end.y) : context.createRadialGradient(a.start.x, a.start.y, 0, a.start.x, a.start.y, Math.hypot(a.end.x - a.start.x, a.end.y - a.start.y));
           gradient.addColorStop(0, `rgba(255,255,255,${luminance(colors[0]) / 255})`);
           gradient.addColorStop(1, `rgba(255,255,255,${settings.gradientToTransparent ? 0 : luminance(colors[1]) / 255})`);
-          context.globalCompositeOperation = 'copy'; context.fillStyle = gradient; context.fillRect(0, 0, d.width, d.height);
+          const sel = selectionRef.current, layer = makeCanvas(d.width, d.height), lc = layer.getContext('2d')!;
+          lc.fillStyle = gradient; lc.fillRect(0, 0, d.width, d.height);
+          if (sel) { lc.globalCompositeOperation = 'destination-in'; lc.drawImage(sel.mask, 0, 0); }
+          // Like the image gradient: blend over the mask by the fill opacity, only inside the selection.
+          const opacity = settings.fillOpacity / 100;
+          context.globalAlpha = opacity;
+          context.globalCompositeOperation = 'destination-out';
+          if (sel) context.drawImage(sel.mask, 0, 0); else { context.fillStyle = '#fff'; context.fillRect(0, 0, d.width, d.height); }
+          context.globalCompositeOperation = 'lighter'; context.drawImage(layer, 0, 0);
         };
-        const rev = editSurface(store, surface.key, { x: 0, y: 0, w: d.width, h: d.height }, g);
+        const area = selectionRef.current?.bounds ?? { x: 0, y: 0, w: d.width, h: d.height };
+        const rev = editSurface(store, surface.key, area, g);
         if (rev !== null) commitSurface(surface.layer.id, true, rev, 'マスクのグラデーション', false);
       } else {
         const changed = gradientFill(store, surface.key, a.start, a.end, settings.gradient, [colors[0], settings.gradientToTransparent ? clearColor(colors[0]) : colors[1]], settings.fillOpacity, surface.offset, selectionRef.current);
@@ -741,12 +777,19 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     full.getContext('2d')!.drawImage(source.canvas, source.x, source.y);
     void runAi('背景を見分けています…', async () => {
       const matte = await subjectMask(full, d.width, d.height);
+      // The document may have changed while the model ran: use the layer as it is now.
+      const now = historyRef.current?.present.layers.find(l => l.id === layer.id);
+      if (!now) throw new Error('レイヤーが削除されたため、背景の削除を取り消しました。');
+      if (now.x !== layer.x || now.y !== layer.y) throw new Error('処理中にレイヤーが移動されたため、背景の削除を取り消しました。');
       const key = maskKey(layer.id);
-      if (layer.mask && store.has(key)) {
+      if (now.mask && store.has(key)) {
         // Keep the existing mask and hide the background on top of it, as one undoable change.
         const rev = editSurface(store, key, { x: 0, y: 0, w: d.width, h: d.height }, c => { c.globalCompositeOperation = 'destination-in'; c.drawImage(matte, 0, 0); });
         if (rev !== null) updateLayer(layer.id, { mask: { rev, enabled: true } }, '背景を削除');
-      } else updateLayer(layer.id, { mask: { rev: store.create(key, d.width, d.height, matte), enabled: true } }, '背景を削除');
+      } else {
+        const rev = replaceMask(store, key, d.width, d.height, matte);
+        if (rev !== null) updateLayer(layer.id, { mask: { rev, enabled: true } }, '背景を削除');
+      }
       setTarget('mask');
       onToast('背景を隠すマスクを付けました。白のブラシで表示、黒のブラシで非表示に直せます。');
     });
@@ -766,7 +809,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const aiUpscale = useCallback((factor: 2 | 4) => {
     const d = historyRef.current?.present;
     if (!d || !version) return;
-    const image = adjuster.canvas;
+    const image = fullImage();
+    if (!image) return;
     void runAi(`${factor}倍に拡大しています…`, async progress => {
       const out = outputSize(d.geometry, d.width, d.height);
       const flat = makeCanvas(out.width, out.height);
@@ -778,7 +822,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       onToast(`${factor}倍に拡大した画像を新しく追加しました。元の画像はそのまま残っています。`);
       onAddImage(new File([blob], `${baseName(project.name)} ×${factor}.png`, { type: 'image/png', lastModified: Date.now() }));
     }, true);
-  }, [adjuster, version, runAi, onToast, onAddImage, project.name]);
+  }, [fullImage, version, runAi, onToast, onAddImage, project.name]);
 
   const layerActions: LayerActions = useMemo(() => ({
     select: selectLayer,
@@ -815,7 +859,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       if (!d) return;
       const key = maskKey(d.selected);
       const sel = selectionRef.current;
-      const rev = sel ? store.create(key, d.width, d.height, sel.mask) : createMask(store, key, d.width, d.height);
+      const rev = replaceMask(store, key, d.width, d.height, sel?.mask);
+      if (rev === null) return;
       updateLayer(d.selected, { mask: { rev, enabled: true } }, sel ? '選択範囲からマスク' : 'マスクを追加');
       setTarget('mask');
     },
@@ -842,6 +887,9 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   }), [selectLayer, updateLayer, endGesture, insertLayer, newRaster, addImage, change, store, cache]);
 
   // Save a thumbnail of the edited result and any unsaved pixels when leaving the editor.
+  // Rendered once when the sheet opens (at full size, which can take a moment for large images).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const exportImage = useMemo(() => exporting && version ? fullImage() : null, [exporting, version, fullImage]);
   const latest = useRef<{ doc?: Doc; image?: HTMLCanvasElement }>({});
   latest.current = { doc, image: version ? adjuster.canvas : undefined };
   useEffect(() => () => {
@@ -872,6 +920,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
       if ((event.target as HTMLElement)?.closest('input:not([type=range]):not([type=color]), select, textarea, dialog')) return;
+      // A focused slider keeps its own arrow, Home/End and Page keys; Delete must not erase the image either.
+      if ((event.target as HTMLElement)?.matches?.('input[type=range]') && /^(arrow|home|end|page|delete|backspace)/i.test(event.key)) return;
       const command = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
       const h = historyRef.current;
       if (command && key === 'z') { event.preventDefault(); if (h && !action.current) apply(event.shiftKey ? redo(h) : undo(h)); }
@@ -921,10 +971,10 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         if (next) setTool(next);
       }
     };
-    const up = (event: KeyboardEvent) => { if (event.key === ' ') setSpace(false); if (event.key === '\\') setBefore(false); if (event.key === 'Shift' || event.key === 'Alt') bumpOverlay(); };
+    const up = (event: KeyboardEvent) => { if (event.key.startsWith('Arrow')) endGesture(); if (event.key === ' ') setSpace(false); if (event.key === '\\') setBefore(false); if (event.key === 'Shift' || event.key === 'Alt') bumpOverlay(); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast, aiFillSelection]);
+  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast, aiFillSelection, endGesture]);
   if (error) return <div className="app editor"><div className="editor-error"><h2>画像を開けませんでした</h2><p>{error}</p><button type="button" className="btn" onClick={onClose}><ArrowLeft size={16}/>ライブラリに戻る</button></div></div>;
   if (!doc || !history || !output || !selected) return <div className="app editor"><div className="editor-loading"><span className="spinner" aria-hidden="true"/>読み込み中…</div></div>;
 
@@ -960,6 +1010,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         <Stage doc={shown} image={before ? work.current : (version ? adjuster.canvas : null)} imageVersion={version + (before ? 0.5 : 0)} view={view} tool={tool} spaceHeld={space} checkerboard={prefs.checkerboard}
           aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
         {before && <div className="stage-badge">補正前</div>}
+        {aiBusy && tab !== 'ai' && <div className="ai-chip" role="status"><span className="spinner" aria-hidden="true"/><span>{aiBusy.label}{aiBusy.progress !== null && ` ${Math.round(aiBusy.progress * 100)}%`}</span><button type="button" className="btn ghost small" onClick={cancelAi}>中止</button></div>}
         {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand} onRefine={refine}/>}
         {tool === 'crop' && <div className="crop-bar" role="toolbar" aria-label="切り抜き">
           <label className="select"><span>比率</span><select value={aspectId} onChange={e => chooseAspect(e.target.value)}>{ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
@@ -996,8 +1047,31 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         </div>
       </aside>
     </div>
-    {exporting && version > 0 && <ExportSheet doc={doc} image={adjuster.canvas} name={project.name} onClose={() => setExporting(false)} onToast={onToast} onProject={saveProject}/>}
+    {exporting && exportImage && <ExportSheet doc={doc} image={exportImage} name={project.name} onClose={() => setExporting(false)} onToast={onToast} onProject={saveProject}/>}
   </div>;
 }
 
 /** A layer mask starts fully white: everything visible. */
+
+/** Sets a layer's mask surface to `source` (or all white). An existing surface is edited rather than replaced,
+ *  so undo can still reach its earlier revisions. */
+function replaceMask(store: PixelStore, key: string, width: number, height: number, source?: CanvasImageSource): number | null {
+  if (!store.has(key)) return createMask(store, key, width, height, source);
+  return editSurface(store, key, { x: 0, y: 0, w: width, h: height }, c => {
+    c.globalCompositeOperation = 'copy';
+    if (source) c.drawImage(source, 0, 0);
+    else { c.fillStyle = '#fff'; c.fillRect(0, 0, width, height); }
+  });
+}
+
+/** Every surface revision any state in the history points at, by surface key. */
+function surfaceRevisions(history: History<Doc>): Map<string, Set<number>> {
+  const refs = new Map<string, Set<number>>();
+  const add = (key: string, rev: number) => { let set = refs.get(key); if (!set) refs.set(key, set = new Set()); set.add(rev); };
+  for (const state of [...history.past.map(entry => entry.state), history.present, ...history.future.map(entry => entry.state)])
+    for (const layer of state.layers) {
+      if (layer.kind === 'raster') add(layer.id, layer.rev);
+      if (layer.mask) add(maskKey(layer.id), layer.mask.rev);
+    }
+  return refs;
+}
