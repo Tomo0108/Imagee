@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Clock3, Heart, ImagePlus, Images, LayoutGrid, List, MoreHorizontal, Pencil, Search, Settings2, Trash2, Upload, X, HardDrive, PackageOpen } from 'lucide-react';
+import { Clock3, Heart, ImagePlus, Images, LayoutGrid, List, MoreHorizontal, Pencil, Search, Settings2, Trash2, Upload, X, HardDrive, PackageOpen, Layers3 } from 'lucide-react';
 import type { Project } from '../store';
 import type { Preferences } from '../lib/preferences.mjs';
 import { formatBytes, visibleProjects } from '../lib/files.mjs';
 import { pickImages } from '../platform';
 import { IconButton, Modal, Segmented, mod } from '../ui';
+import { BatchDialog } from './BatchDialog';
 
 type Filter = 'all' | 'recent' | 'favorites';
 const FILTERS: { id: Filter; label: string; icon: typeof Images }[] = [
@@ -16,15 +17,16 @@ const FILTERS: { id: Filter; label: string; icon: typeof Images }[] = [
 interface Props {
   projects: Project[] | null; prefs: Preferences; busy: number;
   onPrefs: (prefs: Preferences) => void; onImport: (files: File[]) => void; onOpen: (project: Project) => void;
-  onUpdate: (project: Project) => void; onRemove: (ids: string[]) => Promise<void>; onSettings: () => void; onExport: (project: Project) => void;
+  onUpdate: (project: Project) => void; onRemove: (ids: string[]) => Promise<void>; onSettings: () => void; onExport: (project: Project) => void; onToast: (message: string) => void;
 }
 
-export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUpdate, onRemove, onSettings, onExport }: Props) {
+export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUpdate, onRemove, onSettings, onExport, onToast }: Props) {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState(false);
   const [renaming, setRenaming] = useState<Project | null>(null);
   const [deleting, setDeleting] = useState<Project | null>(null);
+  const [batch, setBatch] = useState(false);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
   const depth = useRef(0);
   const items = useMemo(() => visibleProjects(projects || [], prefs.sort, query, filter), [projects, prefs.sort, query, filter]);
@@ -71,6 +73,7 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
           <div className="page-head-main"><h1>{title}</h1>{!empty && <span className="head-sub num">{items.length}枚</span>}</div>
           <div className="head-actions">
             {!empty && <label className="search"><Search size={14} aria-hidden="true"/><input type="search" value={query} placeholder="名前で検索" aria-label="名前で検索" onChange={e => setQuery(e.target.value)}/>{query && <button type="button" className="search-clear" aria-label="検索をクリア" onClick={() => setQuery('')}><X size={13}/></button>}</label>}
+            {!empty && <button type="button" className="btn" onClick={() => setBatch(true)}><Layers3 size={16} aria-hidden="true"/><span className="btn-label">一括処理</span></button>}
             <button type="button" className="btn primary" onClick={() => void pickImages(true).then(files => files.length && onImport(files))}><ImagePlus size={16} aria-hidden="true"/>画像を開く</button>
           </div>
         </header>
@@ -89,6 +92,7 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
     </main>
     {busy > 0 && <div className="importing" role="status"><span className="spinner" aria-hidden="true"/><div><strong>読み込み中…</strong><span>残り{busy}枚</span></div></div>}
     {dragging && <div className="drop-overlay" aria-hidden="true"><div><Upload size={30}/><strong>ドロップして追加</strong><span>PNG・JPEG・WebP・AVIF・GIF・BMP・PSD・Imagee プロジェクト</span></div></div>}
+    {batch && projects && <BatchDialog projects={items} initial={items.map(p => p.id)} onClose={() => setBatch(false)} onToast={onToast}/>}
     {renaming && <RenameDialog project={renaming} onClose={() => setRenaming(null)} onSave={name => { onUpdate({ ...renaming, name }); setRenaming(null); }}/>}
     {deleting && <Modal title="画像を削除" onClose={() => setDeleting(null)}>
       <p className="modal-text">「{deleting.name}」をライブラリから削除します。元のファイルは削除されません。</p>

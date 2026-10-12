@@ -2,8 +2,9 @@
 // Usage: npm run build && npm run test:ui   (screenshots go to $IMAGEE_SHOTS or ./screenshots)
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { unzipSync } from 'fflate';
 
 const out = process.env.IMAGEE_SHOTS || 'screenshots';
 mkdirSync(out, { recursive: true });
@@ -282,6 +283,34 @@ try {
   assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', '調整レイヤー 1', 'レイヤー 1', '背景'], '.imagee keeps every layer');
   assert.ok(isRed(await pixel(cx + 104, cy + 250)), '.imagee keeps painted pixels');
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+
+  // Batch: crop two images to 1:1, fit the long side to 400 px, add a watermark and save them as one zip.
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: '一括処理' }).click();
+  await page.getByRole('button', { name: 'すべて解除' }).click();
+  await page.getByRole('checkbox', { name: 'portrait.png' }).check();
+  await page.getByRole('checkbox', { name: '夕焼け.png' }).check();
+  await page.getByLabel('縦横比').selectOption('1:1');
+  await page.getByLabel('サイズの基準').selectOption('long');
+  await page.getByLabel('サイズの値').fill('400');
+  await page.getByLabel('色調').selectOption({ label: 'ビビッド' });
+  await page.getByLabel('透かし', { exact: true }).fill('© Imagee');
+  await page.getByRole('radio', { name: 'PNG' }).click();
+  await page.getByLabel('ファイル名の末尾').fill('_web');
+  await page.getByLabel('レシピ名').fill('SNS 用');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('imagee-recipes'))[0].name), 'SNS 用', 'the recipe is saved');
+  await page.screenshot({ path: `${out}/batch-dark.png` });
+  await page.getByRole('button', { name: '2枚を書き出す' }).click();
+  await page.waitForFunction(() => window.__saved['Imagee-2枚.zip'], null, { timeout: 30000 });
+  const zip = await page.evaluate(async () => { const b = new Uint8Array(await window.__saved['Imagee-2枚.zip'].arrayBuffer()); let s = ''; for (const x of b) s += String.fromCharCode(x); return btoa(s); });
+  const entries = unzipSync(new Uint8Array(Buffer.from(zip, 'base64')));
+  assert.deepEqual(Object.keys(entries).sort(), ['portrait_web.png', '夕焼け_web.png'].sort(), 'batch outputs are named with the suffix');
+  for (const [name, data] of Object.entries(entries)) {
+    const view = new DataView(data.buffer, data.byteOffset);
+    writeFileSync(`${out}/batch-${name}`, data);
+    assert.deepEqual([view.getUint32(16), view.getUint32(20)], [400, 400], `${name} is cropped to 1:1 and resized to 400 px`);
+  }
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();
   await page.locator('.project').first().waitFor();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ArrowLeft, Check, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
 import type { Project } from '../store';
-import { readPixels, readSource, writePixels } from '../store';
+import { writePixels } from '../store';
 import { decode, histogram, thumbnail, toBlob, canvas as makeCanvas } from '../imaging';
 import type { Preferences } from '../lib/preferences.mjs';
 import { centered, fitScale, formatZoom, stepZoom, zoomAt, type View } from '../lib/viewport.mjs';
@@ -10,11 +10,12 @@ import { autoAdjust, NEUTRAL, type Adjustments } from '../lib/adjust.mjs';
 import { ASPECTS, autoCrop, fitAspect, flip, IDENTITY, MAX_ANGLE, orientedSize, outputSize, rotateQuarter, type Rect } from '../lib/geometry.mjs';
 import { floodMask } from '../lib/flood.mjs';
 import { effectivePressure } from '../lib/brush.mjs';
-import { compositeInto, createDoc, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer, type AdjustLayer } from './document';
+import { compositeInto, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer, type AdjustLayer } from './document';
 import { PixelStore, union, type Box } from './pixels';
 import { arrayMask, combine, invertSelection, refineSelection, selectAll, shapeMask, type Refine, type SelectMode, type Selection } from './selection';
 import { bucketFill, editSurface, gradientFill, healSurface, HealMask, hexToRgb, rgbToHex, Stroke, type CloneSource } from './tools';
 import { Adjuster } from './gl';
+import { createMask, loadDoc } from './load';
 import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from './Stage';
 import { ExportSheet } from './ExportSheet';
 import { AdjustPanel, HistoryPanel, InfoPanel, LayersPanel, type LayerActions } from './panels';
@@ -104,36 +105,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const blob = await readSource(project.id);
-      if (!blob) throw new Error('元の画像が見つかりません。ライブラリに追加し直してください。');
-      const [bitmap, pixels] = await Promise.all([decode(blob), readPixels(project.id).catch(() => new Map<string, Blob>())]);
-      if (cancelled) { bitmap.close(); return; }
-      const { width, height } = bitmap;
-      const background: RasterLayer = { kind: 'raster', id: 'background', name: '背景', visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: 0 };
-      const initial = createDoc(width, height, background, project.edits);
-      const restore = async (key: string) => { const saved = pixels.get(key); return saved ? decode(saved).catch(() => undefined) : undefined; };
-      const layers: Layer[] = [];
-      for (const layer of initial.layers) {
-        let next = layer;
-        if (layer.kind === 'raster') {
-          const saved = await restore(layer.id);
-          const rev = store.create(layer.id, width, height, saved || (layer.id === 'background' ? bitmap : undefined));
-          saved?.close();
-          store.saved.set(layer.id, rev);
-          next = { ...layer, rev };
-        }
-        if (layer.mask) {
-          const key = maskKey(layer.id), saved = await restore(key);
-          const rev = createMask(store, key, width, height, saved);
-          saved?.close();
-          store.saved.set(key, rev);
-          next = { ...next, mask: { ...layer.mask, rev } };
-        }
-        layers.push(next);
-      }
-      bitmap.close();
-      if (cancelled) return;
-      const doc = { ...initial, layers };
+      const doc = await loadDoc(project, store, () => cancelled);
+      if (!doc) return;
       work.current = workCanvas(doc, adjuster.maxSize);
       apply(createHistory<Doc>(doc));
     })().catch(e => !cancelled && setError(e.message));
@@ -919,8 +892,3 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
 }
 
 /** A layer mask starts fully white: everything visible. */
-function createMask(store: PixelStore, key: string, width: number, height: number, source?: CanvasImageSource): number {
-  const rev = store.create(key, width, height, source);
-  if (!source) { const c = store.context(key); c.fillStyle = '#fff'; c.fillRect(0, 0, width, height); }
-  return rev;
-}

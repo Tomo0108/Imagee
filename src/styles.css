@@ -335,6 +335,43 @@ html[data-platform="mac"] .sidebar { padding-top: 40px; }
 .export-summary b { font-size: var(--type-title3); font-weight: 650; }
 .export .setting-note { margin-top: -6px; }
 
+/* ---------- Batch ---------- */
+
+.modal.wide { width: min(820px, calc(100vw - 32px)); }
+.batch { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 18px; min-height: 0; }
+.batch-pick { display: flex; flex-direction: column; min-height: 0; }
+.batch-pick-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: var(--type-callout); }
+.batch-pick-head .num { color: var(--label-3); font-weight: 500; }
+.link-btn { border: 0; background: none; color: var(--a1); font-size: var(--type-caption); cursor: pointer; padding: 4px; }
+.link-btn:disabled { opacity: .4; cursor: default; }
+.batch-list { list-style: none; margin: 0; padding: 4px; max-height: min(420px, 50dvh); overflow: auto; border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--surface-edge); }
+.batch-list label { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: var(--type-callout); }
+.batch-list label:hover { background: var(--fill); }
+.batch-list input { accent-color: var(--a1); flex: none; }
+.batch-thumb { width: 36px; height: 36px; flex: none; border-radius: 6px; overflow: hidden; background: var(--fill-2); }
+.batch-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.batch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-recipe { display: grid; gap: 12px; align-content: start; max-height: min(460px, 56dvh); overflow: auto; padding-right: 2px; }
+.batch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--type-callout); min-width: 0; }
+.batch-row > span { flex: none; color: var(--label-2); }
+.batch-row > .text-input, .batch-row > select { flex: 1; min-width: 0; max-width: 260px; height: 32px; }
+.batch-recipes { justify-content: flex-start; gap: 8px; padding-bottom: 12px; border-bottom: 0.5px solid var(--sep); }
+.batch-recipes .text-input { flex: 1; height: 32px; min-width: 0; }
+.batch-recipes select { flex: 0 1 120px; min-width: 0; height: 32px; }
+.batch-inline { display: flex; align-items: center; gap: 8px; }
+.batch-inline .text-input { width: 96px; height: 32px; }
+.batch-inline .unit { color: var(--label-3); font-size: var(--type-caption); }
+.batch-sub { display: grid; gap: 10px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--surface-edge); }
+.btn.icon-only { padding: 0 9px; }
+.batch-progress { display: grid; gap: 6px; margin-top: 14px; font-size: var(--type-caption); color: var(--label-2); }
+.batch-progress .meter > i { background: var(--a1); transition: width .25s var(--ease); }
+@media (max-width: 720px) {
+  .batch { grid-template-columns: minmax(0, 1fr); }
+  .batch-list { max-height: 180px; }
+  .batch-recipe { max-height: none; overflow: visible; }
+  .modal.wide { overflow: auto; }
+}
+
 /* ---------- Editor ---------- */
 
 .editor { display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--stage); }
@@ -383,8 +420,8 @@ html[data-platform="mac"] .editor-bar { padding-left: 80px; }
 .layer-rename { flex: 1; min-width: 0; height: 24px; padding: 0 6px; border: 0; border-radius: 6px; background: var(--fill-2); color: var(--label); font: inherit; font-size: var(--type-callout); }
 .layer-props { margin-top: 10px; padding-top: 12px; border-top: 0.5px solid var(--sep); }
 .panel-note.tight { margin: 0 2px; }
-.text-input { width: 100%; resize: vertical; min-height: 64px; padding: 8px 10px; border: 0; border-radius: 10px; background: var(--fill-2); color: var(--label); font: inherit; font-size: var(--type-body); box-shadow: inset 0 0 0 0.5px var(--surface-edge); }
-.text-input:focus { outline: 2px solid color-mix(in srgb, var(--a1) 60%, transparent); }
+textarea.text-input { width: 100%; resize: vertical; min-height: 64px; padding: 8px 10px; border: 0; border-radius: 10px; background: var(--fill-2); color: var(--label); font: inherit; font-size: var(--type-body); box-shadow: inset 0 0 0 0.5px var(--surface-edge); }
+textarea.text-input:focus { outline: 2px solid color-mix(in srgb, var(--a1) 60%, transparent); }
 .field-row { display: inline-flex; align-items: center; gap: 6px; }
 .color-input { width: 30px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: none; cursor: pointer; }
 .color-input::-webkit-color-swatch-wrapper { padding: 2px; }
