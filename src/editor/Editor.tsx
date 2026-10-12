@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Sparkles, ArrowLeft, Check, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
+import { Sparkles, ArrowLeft, Check, CircleHelp, ClipboardPaste, Copy, Expand, ImagePlus, Mountain, PaintBucket, Scaling, Scissors, Search, SquareDashed, SquareMinus, Trash2, UserRound, Wand2, ZoomIn, ZoomOut, Eraser, ArrowUp, ArrowDown, Crop, FileDown, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
 import type { Project } from '../store';
 import { writePixels } from '../store';
 import { decode, histogram, thumbnail, toBlob, canvas as makeCanvas } from '../imaging';
@@ -20,7 +20,10 @@ import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from 
 import { ExportSheet } from './ExportSheet';
 import { renderDocument } from './render';
 import { AdjustPanel, HistoryPanel, InfoPanel, LayersPanel, type LayerActions } from './panels';
-import { loadSettings, storeSettings, ToolOptions, ToolRail, type ToolSettings } from './toolbar';
+import { hintSeen, loadSettings, storeSettings, ToolOptions, ToolRail, TOOLS, type ToolSettings } from './toolbar';
+import { CommandPalette, type Command } from './CommandPalette';
+import { HelpSheet } from './HelpSheet';
+import { ResizeSheet, type ResizeMode, type ResizeRequest } from './ResizeSheet';
 import { pickFile, pickImages, saveBlob } from '../platform';
 import { NEUTRAL_COLOR, parseCube, type ColorOps } from '../lib/color.mjs';
 import { addLut, readLuts, removeLut } from '../store';
@@ -32,6 +35,28 @@ import { cancelAi, removeArea, skyMaskCanvas, subjectMask, upscale } from '../ai
 import { IconButton, Slider, mod } from '../ui';
 
 type Tab = 'adjust' | 'layers' | 'ai' | 'history' | 'info';
+const TABS: Tab[] = ['layers', 'adjust', 'ai', 'history', 'info'];
+/** Readings and other names for each tool, for the feature search. */
+const TOOL_SEARCH: Record<Tool, { reading?: string; keywords: string[] }> = {
+  move: { reading: 'イドウ', keywords: ['move', 'ドラッグ'] },
+  marquee: { reading: 'チョウホウケイセンタク', keywords: ['marquee', 'rectangle select', 'シカク'] },
+  ellipse: { reading: 'ダエンケイセンタク', keywords: ['ellipse', 'エン', 'マル'] },
+  lasso: { reading: 'ナゲナワセンタク', keywords: ['lasso', 'ラッソ', 'フリーハンド'] },
+  wand: { reading: 'ジドウセンタク', keywords: ['magic wand', 'マジックワンド', 'イロデセンタク'] },
+  brush: { keywords: ['brush', 'pen', 'ペン', 'エガク', 'カク', 'ヌル'] },
+  eraser: { reading: 'ケシゴム', keywords: ['eraser', 'ケス'] },
+  heal: { reading: 'スポットシュウフクブラシ', keywords: ['heal', 'シミ', 'ゴミ', 'ヒール'] },
+  remove: { reading: 'フヨウブツヲケス', keywords: ['remove', 'object removal', 'ショウキョ', 'ケス', 'AI'] },
+  clone: { keywords: ['clone stamp', 'スタンプ', 'クローン'] },
+  fill: { reading: 'ヌリツブシ', keywords: ['bucket', 'fill', 'バケツ'] },
+  gradient: { keywords: ['gradient', 'グラデ'] },
+  eyedropper: { keywords: ['eyedropper', 'picker', 'イロヲトル', 'カラーピッカー'] },
+  text: { keywords: ['text', 'type', 'モジ', 'ジ'] },
+  shape: { reading: 'ズケイ', keywords: ['shape', 'rectangle', 'シカク', 'マル', 'セン'] },
+  crop: { reading: 'キリヌキトカイテン', keywords: ['crop', 'トリミング', 'カイテン', 'カタムキ', 'straighten'] },
+  hand: { reading: 'テノヒラ', keywords: ['hand', 'pan', 'スクロール'] },
+  zoom: { keywords: ['zoom', 'カクダイ', 'シュクショウ'] },
+};
 type Point = { x: number; y: number };
 interface Props { project: Project; prefs: Preferences; onClose: () => void; onUpdate: (project: Project) => void; onToast: (message: string) => void; onSettings: () => void; onAddImage: (file: File) => void }
 /** A pointer action in progress on the canvas. */
@@ -67,10 +92,23 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const [tool, setToolState] = useState<Tool>('hand');
   const [space, setSpace] = useState(false);
   const [before, setBefore] = useState(false);
-  const [tab, setTab] = useState<Tab>('layers');
+  const [tab, setTabState] = useState<Tab>('layers');
+  const tabRef = useRef<Tab>('layers');
+  /** Panels slide in from the side of the tab that was picked. */
+  const setTab = useCallback((next: Tab) => {
+    if (next === tabRef.current) return;
+    setTabDir(TABS.indexOf(next) > TABS.indexOf(tabRef.current) ? 'fwd' : 'back');
+    tabRef.current = next; setTabState(next);
+  }, []);
   const [aspectId, setAspectId] = useState('free');
   const [cursor, setCursor] = useState<Point | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [resizing, setResizing] = useState<ResizeMode | null>(null);
+  /** The first time a tool is picked, its hint shows above the canvas; after that it lives in the help. */
+  const [hint, setHint] = useState(false);
+  const [tabDir, setTabDir] = useState<'fwd' | 'back'>('fwd');
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
   const [overlayVersion, bumpOverlay] = useReducer((n: number) => n + 1, 0);
@@ -143,7 +181,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   // Layers → composite at working size → adjustments. Surfaces follow the revisions the document points at,
   // so undo and redo of painting are just changes of the document.
   useEffect(() => {
-    if (!doc || !work.current || composited.current === doc.layers) return;
+    if (!doc || !work.current) return;
+    // The image or canvas size changed (or was undone): a working canvas of the new size.
+    const fresh = workCanvas(doc, adjuster.maxSize);
+    if (fresh.width !== work.current.width || fresh.height !== work.current.height) { work.current = fresh; composited.current = null; }
+    else fresh.width = fresh.height = 0;
+    if (composited.current === doc.layers) return;
     for (const layer of doc.layers) {
       if (layer.kind === 'raster') store.sync(layer.id, layer.rev);
       if (layer.mask) store.sync(maskKey(layer.id), layer.mask.rev);
@@ -181,11 +224,13 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     });
   }, [adjuster, store, cache]);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  useEffect(() => { setHint(!hintSeen('hand')); }, []);
+  useEffect(() => { if (!hint) return; const timer = setTimeout(() => setHint(false), 12000); return () => clearTimeout(timer); }, [hint, tool]);
   // Leaving the editor stops AI work, so a late result cannot change or open anything.
   useEffect(() => () => cancelAi(), []);
 
   // Autosave: edits as JSON with the project, painted surfaces as PNG in their own store.
-  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.color, doc?.geometry, doc?.selected]); // eslint-disable-line react-hooks/exhaustive-deps
+  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.color, doc?.geometry, doc?.selected, doc?.width, doc?.height]); // eslint-disable-line react-hooks/exhaustive-deps
   const firstEdits = useRef(true);
   useEffect(() => {
     if (!edits) return;
@@ -276,6 +321,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
 
   const setTool = useCallback((next: Tool) => {
     action.current = null;
+    setHint(!hintSeen(next));
     setToolState(current => { if ((current === 'crop') !== (next === 'crop')) setView(null); return next; });
   }, []);
   const fit = useCallback(() => {
@@ -824,6 +870,43 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     }, true);
   }, [fullImage, version, runAi, onToast, onAddImage, project.name]);
 
+  /** Image size scales every layer; canvas size adds or trims space around them. Every layer gets new surfaces
+   *  (under new ids), so undo simply returns to the old ones. */
+  const resizeDoc = useCallback(({ mode, width, height, anchor, fill }: ResizeRequest) => {
+    const d = historyRef.current?.present;
+    if (!d || (width === d.width && height === d.height)) return;
+    const sx = width / d.width, sy = height / d.height, k = Math.sqrt(sx * sy);
+    const dx = mode === 'canvas' ? Math.round((width - d.width) * anchor[0]) : 0, dy = mode === 'canvas' ? Math.round((height - d.height) * anchor[1]) : 0;
+    const bottom = d.layers.find(layer => layer.kind === 'raster')?.id;
+    const ids = new Map<string, string>();
+    const redraw = (from: HTMLCanvasElement, key: string, before?: (c: CanvasRenderingContext2D) => void) => {
+      const rev = store.create(key, width, height), c = store.context(key);
+      before?.(c);
+      if (mode === 'image') { c.imageSmoothingQuality = 'high'; c.drawImage(from, 0, 0, width, height); }
+      else c.drawImage(from, dx, dy);
+      return rev;
+    };
+    // New space: the bottom layer may be painted in the background colour; masks show it (white).
+    const around = (color: string) => (c: CanvasRenderingContext2D) => { c.fillStyle = color; c.fillRect(0, 0, width, height); c.clearRect(dx, dy, d.width, d.height); };
+    const layers = d.layers.map(layer => {
+      const id = newLayerId();
+      ids.set(layer.id, id);
+      let next = { ...layer, id } as Layer;
+      if (mode === 'image') next = { ...next, x: Math.round(layer.x * sx), y: Math.round(layer.y * sy) };
+      else if (layer.kind !== 'raster') next = { ...next, x: layer.x + dx, y: layer.y + dy };
+      if (mode === 'image' && next.kind === 'text') next = { ...next, text: { ...next.text, size: Math.max(1, Math.round(next.text.size * k)) } };
+      if (mode === 'image' && next.kind === 'shape') next = { ...next, shape: { ...next.shape, w: Math.max(1, Math.round(next.shape.w * sx)), h: Math.max(1, Math.round(next.shape.h * sy)), strokeWidth: Math.max(1, Math.round(next.shape.strokeWidth * k)), radius: Math.round(next.shape.radius * k) } };
+      if (layer.kind === 'raster') next = { ...next, rev: redraw(store.get(layer.id)!, id, mode === 'canvas' && fill && layer.id === bottom ? around(fill) : undefined) } as Layer;
+      if (layer.mask) next = { ...next, mask: { ...layer.mask, rev: redraw(store.get(maskKey(layer.id))!, maskKey(id), mode === 'canvas' ? around('#fff') : undefined) } };
+      return next;
+    });
+    const g = d.geometry, [fx, fy] = g.quarter % 2 ? [sy, sx] : [sx, sy];
+    const geometry = mode === 'image' && g.crop ? { ...g, crop: { x: g.crop.x * fx, y: g.crop.y * fy, w: g.crop.w * fx, h: g.crop.h * fy } } : { ...g, crop: null };
+    setSelection(null); cloneSource.current = null; cloneOffset.current = null;
+    change(doc => ({ ...doc, width, height, layers, geometry, selected: ids.get(doc.selected) ?? layers[layers.length - 1].id }), mode === 'image' ? '画像サイズを変更' : 'キャンバスサイズを変更');
+    onToast(`${mode === 'image' ? '画像' : 'キャンバス'}のサイズを ${width} × ${height} px にしました。`);
+  }, [store, change, setSelection, onToast]);
+
   const layerActions: LayerActions = useMemo(() => ({
     select: selectLayer,
     update: updateLayer,
@@ -886,6 +969,81 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     },
   }), [selectLayer, updateLayer, endGesture, insertLayer, newRaster, addImage, change, store, cache]);
 
+  /** Everything the feature search can find and run. */
+  const commands = useMemo((): Command[] => {
+    if (!history || !palette) return [];
+    const d = history.present;
+    const layer = d.layers.find(l => l.id === d.selected);
+    const noSelection = selection ? undefined : '選択範囲がありません';
+    const geometry = (recipe: (doc: Doc) => Doc['geometry'], label: string) => () => change(doc => ({ ...doc, geometry: recipe(doc) }), label);
+    const list: Command[] = [
+      // Image
+      { id: 'image-size', group: '画像', label: '画像サイズを変更', reading: 'ガゾウサイズヲヘンコウ', keywords: ['resize', 'image size', 'リサイズ', 'カクダイシュクショウ', 'カイゾウド', 'ピクセルスウ'], icon: Scaling, run: () => setResizing('image') },
+      { id: 'canvas-size', group: '画像', label: 'キャンバスサイズを変更', reading: 'キャンバスサイズヲヘンコウ', keywords: ['canvas size', 'ヨハク', 'ワク', 'ヒロゲル'], icon: Expand, run: () => setResizing('canvas') },
+      { id: 'crop', group: '画像', label: '切り抜きと回転', reading: 'キリヌキトカイテン', keywords: ['crop', 'トリミング', 'カタムキ', 'straighten'], icon: Crop, shortcut: 'C', run: () => setTool('crop') },
+      { id: 'rotate-left', group: '画像', label: '左に90°回転', reading: 'ヒダリニカイテン', keywords: ['rotate', 'カイテン'], icon: RotateCcw, run: geometry(doc => rotateQuarter(doc.geometry, -1, doc.width, doc.height), '左に回転') },
+      { id: 'rotate-right', group: '画像', label: '右に90°回転', reading: 'ミギニカイテン', keywords: ['rotate', 'カイテン'], icon: RotateCw, run: geometry(doc => rotateQuarter(doc.geometry, 1, doc.width, doc.height), '右に回転') },
+      { id: 'flip-h', group: '画像', label: '左右反転', reading: 'サユウハンテン', keywords: ['flip horizontal', 'mirror', 'ミラー', 'ハンテン'], icon: FlipHorizontal2, run: geometry(doc => flip(doc.geometry, 'h', doc.width, doc.height), '左右反転') },
+      { id: 'flip-v', group: '画像', label: '上下反転', reading: 'ジョウゲハンテン', keywords: ['flip vertical', 'ハンテン'], icon: FlipVertical2, run: geometry(doc => flip(doc.geometry, 'v', doc.width, doc.height), '上下反転') },
+      { id: 'auto', group: '調整', label: '自動補正', reading: 'ジドウホセイ', keywords: ['auto', 'オート', 'アカルサ'], icon: Wand2, run: () => { setTab('adjust'); auto(); } },
+      { id: 'adjust', group: '調整', label: '色と明るさを調整', reading: 'イロトアカルサヲチョウセイ', keywords: ['adjust', 'ロウコウ', 'コントラスト', 'カーブ', 'トーンカーブ', 'レベル', 'HSL', 'LUT', 'ホワイトバランス', 'サイド', 'プリセット'], icon: SlidersHorizontal, run: () => setTab('adjust') },
+      { id: 'adjust-reset', group: '調整', label: '調整をリセット', reading: 'チョウセイヲリセット', keywords: ['reset'], icon: RotateCcw, run: () => setAdjustState({ basic: NEUTRAL, color: NEUTRAL_COLOR }, '調整をリセット') },
+      // AI
+      { id: 'ai-subject', group: 'AI', label: '被写体を選択', reading: 'ヒシャタイヲセンタク', keywords: ['select subject', 'ジンブツ', 'ヒト'], icon: UserRound, run: aiSubject },
+      { id: 'ai-sky', group: 'AI', label: '空を選択', reading: 'ソラヲセンタク', keywords: ['select sky'], icon: Mountain, run: aiSky },
+      { id: 'ai-background', group: 'AI', label: '背景を削除', reading: 'ハイケイヲサクジョ', keywords: ['remove background', 'ハイケイトウカ', 'キリヌキ', 'トウメイ'], icon: Eraser, disabled: layer?.kind === 'adjust' ? '画像のレイヤーを選んでください' : undefined, run: aiRemoveBackground },
+      { id: 'ai-fill', group: 'AI', label: '選択範囲を消して周りで埋める', reading: 'センタクハンイヲケシテマワリデウメル', keywords: ['content aware fill', 'remove', 'フヨウブツ', 'ショウキョ'], icon: Wand2, shortcut: '⇧+Delete', disabled: noSelection, run: aiFillSelection },
+      { id: 'ai-upscale-2', group: 'AI', label: '2倍に高解像度化', reading: 'ニバイニコウカイゾウドカ', keywords: ['upscale', 'super resolution', 'カクダイ', 'クッキリ'], icon: Sparkles, run: () => aiUpscale(2) },
+      { id: 'ai-upscale-4', group: 'AI', label: '4倍に高解像度化', reading: 'ヨンバイニコウカイゾウドカ', keywords: ['upscale', 'super resolution', 'カクダイ', 'クッキリ'], icon: Sparkles, run: () => aiUpscale(4) },
+      // Selection
+      { id: 'select-all', group: '選択', label: 'すべて選択', reading: 'スベテセンタク', keywords: ['select all', 'ゼンタイ'], icon: SquareDashed, shortcut: `${mod}+A`, run: () => selectionCommand('all') },
+      { id: 'select-none', group: '選択', label: '選択を解除', reading: 'センタクヲカイジョ', keywords: ['deselect'], icon: SquareMinus, shortcut: `${mod}+D`, disabled: noSelection, run: () => selectionCommand('none') },
+      { id: 'select-invert', group: '選択', label: '選択範囲を反転', reading: 'センタクハンイヲハンテン', keywords: ['invert selection'], icon: SquareDashed, shortcut: `${mod}+⇧+I`, disabled: noSelection, run: () => selectionCommand('invert') },
+      { id: 'select-feather', group: '選択', label: '選択範囲をぼかす（8px）', reading: 'センタクハンイヲボカス', keywords: ['feather', 'ボカシ', 'フェザー'], icon: SquareDashed, disabled: noSelection, run: () => refine('feather', 8) },
+      { id: 'select-expand', group: '選択', label: '選択範囲を拡張（8px）', reading: 'センタクハンイヲカクチョウ', keywords: ['expand', 'ヒロゲル'], icon: SquareDashed, disabled: noSelection, run: () => refine('expand', 8) },
+      { id: 'select-contract', group: '選択', label: '選択範囲を縮小（8px）', reading: 'センタクハンイヲシュクショウ', keywords: ['contract', 'セバメル'], icon: SquareDashed, disabled: noSelection, run: () => refine('contract', 8) },
+      // Edit
+      { id: 'undo', group: '編集', label: '元に戻す', reading: 'モトニモドス', keywords: ['undo', 'トリケシ'], icon: Undo2, shortcut: `${mod}+Z`, disabled: history.past.length ? undefined : '戻せる操作がありません', run: () => apply(undo(historyRef.current!)) },
+      { id: 'redo', group: '編集', label: 'やり直す', reading: 'ヤリナオス', keywords: ['redo'], icon: Redo2, shortcut: `${mod}+⇧+Z`, disabled: history.future.length ? undefined : 'やり直せる操作がありません', run: () => apply(redo(historyRef.current!)) },
+      { id: 'copy', group: '編集', label: 'コピー', keywords: ['copy'], icon: Copy, shortcut: `${mod}+C`, run: () => { if (copy()) onToast('コピーしました。'); } },
+      { id: 'cut', group: '編集', label: 'カット', keywords: ['cut', 'キリトリ'], icon: Scissors, shortcut: `${mod}+X`, disabled: noSelection, run: () => { if (copy()) fillSelection(null, 'カット'); } },
+      { id: 'paste', group: '編集', label: '貼り付け', reading: 'ハリツケ', keywords: ['paste', 'ペースト'], icon: ClipboardPaste, shortcut: `${mod}+V`, disabled: clipboard.current ? undefined : 'コピーした内容がありません', run: pasteInternal },
+      { id: 'fill-fg', group: '編集', label: '描画色で塗りつぶし', reading: 'ビョウガショクデヌリツブシ', keywords: ['fill'], icon: PaintBucket, shortcut: 'Alt+Delete', run: () => fillSelection(colors[0], '描画色で塗りつぶし') },
+      { id: 'fill-bg', group: '編集', label: '背景色で塗りつぶし', reading: 'ハイケイショクデヌリツブシ', keywords: ['fill'], icon: PaintBucket, shortcut: `${mod}+Delete`, run: () => fillSelection(colors[1], '背景色で塗りつぶし') },
+      { id: 'clear', group: '編集', label: '選択範囲を消去', reading: 'センタクハンイヲショウキョ', keywords: ['delete', 'clear', 'ケス'], icon: Trash2, shortcut: 'Delete', disabled: noSelection, run: () => fillSelection(null, '消去') },
+      { id: 'swap-colors', group: '編集', label: '描画色と背景色を入れ替え', reading: 'ビョウガショクトハイケイショクヲイレカエ', keywords: ['swap colors', 'イロ'], icon: PaintBucket, shortcut: 'X', run: () => setColors(([a, b]) => [b, a]) },
+      // Layers
+      { id: 'layer-new', group: 'レイヤー', label: '新規レイヤー', reading: 'シンキレイヤー', keywords: ['new layer', 'ツイカ'], icon: Plus, shortcut: '⇧+N', run: layerActions.add },
+      { id: 'layer-image', group: 'レイヤー', label: '画像をレイヤーとして追加', reading: 'ガゾウヲレイヤートシテツイカ', keywords: ['place image', 'import', 'ヨミコミ', 'ハメコミ'], icon: ImagePlus, run: layerActions.importImage },
+      { id: 'layer-duplicate', group: 'レイヤー', label: 'レイヤーを複製', reading: 'レイヤーヲフクセイ', keywords: ['duplicate', 'コピー'], icon: Copy, shortcut: `${mod}+J`, run: layerActions.duplicate },
+      { id: 'layer-delete', group: 'レイヤー', label: 'レイヤーを削除', reading: 'レイヤーヲサクジョ', keywords: ['delete layer'], icon: Trash2, disabled: d.layers.length < 2 ? '最後のレイヤーは削除できません' : undefined, run: layerActions.remove },
+      { id: 'layer-up', group: 'レイヤー', label: 'レイヤーを上へ', reading: 'レイヤーヲウエヘ', keywords: ['bring forward', 'ジュンバン'], icon: ArrowUp, run: () => layerActions.move(1) },
+      { id: 'layer-down', group: 'レイヤー', label: 'レイヤーを下へ', reading: 'レイヤーヲシタヘ', keywords: ['send backward', 'ジュンバン'], icon: ArrowDown, run: () => layerActions.move(-1) },
+      { id: 'mask-add', group: 'レイヤー', label: selection ? '選択範囲からマスクを追加' : 'マスクを追加', reading: 'マスクヲツイカ', keywords: ['layer mask'], icon: Layers, disabled: layer?.mask ? 'すでにマスクがあります' : undefined, run: layerActions.addMask },
+      { id: 'mask-remove', group: 'レイヤー', label: 'マスクを削除', reading: 'マスクヲサクジョ', keywords: ['delete mask'], icon: Layers, disabled: layer?.mask ? undefined : 'マスクがありません', run: layerActions.removeMask },
+      { id: 'adjust-layer', group: 'レイヤー', label: '調整レイヤーを追加', reading: 'チョウセイレイヤーヲツイカ', keywords: ['adjustment layer', 'ブブンホセイ'], icon: SlidersHorizontal, run: layerActions.addAdjust },
+      { id: 'rasterize', group: 'レイヤー', label: 'ラスタライズ', keywords: ['rasterize', 'ガゾウカ'], icon: Layers, disabled: layer?.kind === 'text' || layer?.kind === 'shape' ? undefined : 'テキストか図形のレイヤーを選んでください', run: layerActions.rasterize },
+      // View
+      { id: 'zoom-in', group: '表示', label: 'ズームイン', keywords: ['zoom in', 'カクダイ'], icon: ZoomIn, shortcut: `${mod}+=`, run: () => view && zoomTo(stepZoom(view.scale, 1)) },
+      { id: 'zoom-out', group: '表示', label: 'ズームアウト', keywords: ['zoom out', 'シュクショウ'], icon: ZoomOut, shortcut: `${mod}+−`, run: () => view && zoomTo(stepZoom(view.scale, -1)) },
+      { id: 'zoom-fit', group: '表示', label: '画面に合わせる', reading: 'ガメンニアワセル', keywords: ['fit', 'ゼンタイ'], icon: Maximize, shortcut: `${mod}+0`, run: fit },
+      { id: 'zoom-100', group: '表示', label: '100% で表示', reading: 'ヒャクパーセントデヒョウジ', keywords: ['actual size', 'ジッサイノサイズ', 'トウバイ'], icon: Search, shortcut: `${mod}+1`, run: () => zoomTo(1) },
+      { id: 'panel-layers', group: '表示', label: 'レイヤーパネル', keywords: ['layers'], icon: Layers, run: () => setTab('layers') },
+      { id: 'panel-history', group: '表示', label: '履歴', reading: 'リレキ', keywords: ['history'], icon: HistoryIcon, run: () => setTab('history') },
+      { id: 'panel-info', group: '表示', label: '画像の情報', reading: 'ガゾウノジョウホウ', keywords: ['info', 'ヒストグラム', 'サイズ'], icon: Info, run: () => setTab('info') },
+      { id: 'panel-ai', group: '表示', label: 'AI パネル', keywords: ['ai'], icon: Sparkles, run: () => setTab('ai') },
+      // File
+      { id: 'export', group: 'ファイル', label: '書き出し', reading: 'カキダシ', keywords: ['export', 'save', 'ホゾン', 'PNG', 'JPEG', 'WebP', 'ダウンロード'], icon: Download, shortcut: `${mod}+⇧+E`, run: () => setExporting(true) },
+      { id: 'save-psd', group: 'ファイル', label: 'PSD として保存', reading: 'ピーエスディートシテホゾン', keywords: ['psd', 'photoshop', 'フォトショップ'], icon: FileDown, run: () => void saveProject('psd') },
+      { id: 'save-imagee', group: 'ファイル', label: '.imagee として保存', reading: 'イメージートシテホゾン', keywords: ['project', 'プロジェクト'], icon: FileDown, run: () => void saveProject('imagee') },
+      { id: 'library', group: 'ファイル', label: 'ライブラリに戻る', reading: 'ライブラリニモドル', keywords: ['back', 'close', 'トジル'], icon: ArrowLeft, run: onClose },
+      { id: 'settings', group: 'ファイル', label: '設定', reading: 'セッテイ', keywords: ['settings', 'preferences', 'テーマ', 'ダークモード'], icon: Settings2, run: onSettings },
+      { id: 'help', group: 'ヘルプ', label: 'ヘルプとショートカット', keywords: ['help', 'ツカイカタ', 'ショートカット', 'キー'], icon: CircleHelp, shortcut: '?', run: () => setHelp(true) },
+    ];
+    for (const t of TOOLS) list.push({ id: `tool-${t.id}`, group: 'ツール', label: t.label.replace(/（.*）/, ''), ...TOOL_SEARCH[t.id], icon: t.icon, shortcut: t.key, run: () => setTool(t.id) });
+    return list;
+  }, [palette, history, selection, view, colors, change, apply, setTool, setTab, auto, setAdjustState, aiSubject, aiSky, aiRemoveBackground, aiFillSelection, aiUpscale, selectionCommand, refine, copy, fillSelection, pasteInternal, layerActions, zoomTo, fit, saveProject, onClose, onSettings, onToast]);
+
   // Save a thumbnail of the edited result and any unsaved pixels when leaving the editor.
   // Rendered once when the sheet opens (at full size, which can take a moment for large images).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -924,6 +1082,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       if ((event.target as HTMLElement)?.matches?.('input[type=range]') && /^(arrow|home|end|page|delete|backspace)/i.test(event.key)) return;
       const command = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
       const h = historyRef.current;
+      if ((command && (key === 'k' || key === 'f')) || key === 'f1') { event.preventDefault(); if (key === 'f1') setHelp(true); else setPalette(true); return; }
+      if (!command && event.key === '?') { event.preventDefault(); setHelp(true); return; }
       if (command && key === 'z') { event.preventDefault(); if (h && !action.current) apply(event.shiftKey ? redo(h) : undo(h)); }
       else if (command && key === 'y') { event.preventDefault(); if (h && !action.current) apply(redo(h)); }
       else if (command && (key === '=' || key === '+')) { event.preventDefault(); if (view) zoomTo(stepZoom(view.scale, 1)); }
@@ -999,6 +1159,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       <div className="bar-group end">
         <button type="button" className={`btn compare${before ? ' on' : ''}`} title="押している間、補正前を表示（\\ キー）" aria-pressed={before}
           onPointerDown={() => setBefore(true)} onPointerUp={() => setBefore(false)} onPointerLeave={() => setBefore(false)}><SplitSquareHorizontal size={15} aria-hidden="true"/><span className="btn-label">補正前</span></button>
+        <button type="button" className="btn search-btn" title={`機能を検索 (${mod}+K)`} onClick={() => setPalette(true)}><Search size={15} aria-hidden="true"/><span className="btn-label">機能を検索</span><kbd className="kbd">{mod}+K</kbd></button>
+        <IconButton icon={CircleHelp} label="ヘルプ" shortcut="?" className="help-btn" onClick={() => setHelp(true)}/>
         <IconButton icon={Settings2} label="設定" onClick={onSettings}/>
         <button type="button" className="btn primary" title={`書き出し (${mod}+⇧+E)`} onClick={() => setExporting(true)}><Download size={16} aria-hidden="true"/>書き出し</button>
       </div>
@@ -1011,7 +1173,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
           aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
         {before && <div className="stage-badge">補正前</div>}
         {aiBusy && tab !== 'ai' && <div className="ai-chip" role="status"><span className="spinner" aria-hidden="true"/><span>{aiBusy.label}{aiBusy.progress !== null && ` ${Math.round(aiBusy.progress * 100)}%`}</span><button type="button" className="btn ghost small" onClick={cancelAi}>中止</button></div>}
-        {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand} onRefine={refine}/>}
+        {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand} onRefine={refine} hint={hint} onHelp={() => setHelp(true)}/>}
         {tool === 'crop' && <div className="crop-bar" role="toolbar" aria-label="切り抜き">
           <label className="select"><span>比率</span><select value={aspectId} onChange={e => chooseAspect(e.target.value)}>{ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
           <div className="crop-angle"><Slider label="角度" value={doc.geometry.angle} min={-MAX_ANGLE} max={MAX_ANGLE} step={0.1} format={v => `${v.toFixed(1)}°`} centered onChange={straighten} onCommit={endGesture} onReset={() => straighten(0)}/></div>
@@ -1034,7 +1196,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
           {([['layers', 'レイヤー', Layers], ['adjust', '調整', SlidersHorizontal], ['ai', 'AI', Sparkles], ['history', '履歴', HistoryIcon], ['info', '情報', Info]] as const).map(([id, label, Icon]) =>
             <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} title={label} onClick={() => setTab(id)}><Icon size={15} aria-hidden="true"/><span>{label}</span></button>)}
         </div>
-        <div className="inspector-body">
+        <div className="inspector-body" data-dir={tabDir} key={tab}>
           {tab === 'adjust' && adjustTarget && <AdjustPanel layerName={adjustLayer?.name ?? null} basic={adjustTarget.basic} color={adjustTarget.color} accelerated={adjuster.accelerated} histogram={curveHistogram}
             cubes={cubes} presetSource={work.current} version={version} userPresets={userPresets}
             onBasic={setBasic} onColor={setColor} onState={setAdjustState} onCommit={endGesture} onAuto={auto} onReset={() => setAdjustState({ basic: NEUTRAL, color: NEUTRAL_COLOR }, '調整をリセット')}
@@ -1047,6 +1209,9 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         </div>
       </aside>
     </div>
+    {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)}/>}
+    {help && <HelpSheet onClose={() => setHelp(false)} onSearch={() => { setHelp(false); setPalette(true); }}/>}
+    {resizing && <ResizeSheet initial={resizing} width={doc.width} height={doc.height} background={colors[1]} onApply={resizeDoc} onClose={() => setResizing(null)}/>}
     {exporting && exportImage && <ExportSheet doc={doc} image={exportImage} name={project.name} onClose={() => setExporting(false)} onToast={onToast} onProject={saveProject}/>}
   </div>;
 }

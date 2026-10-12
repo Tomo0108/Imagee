@@ -85,7 +85,7 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
           {projects === null ? null : empty ? <EmptyState onPick={() => void pickImages(true).then(files => files.length && onImport(files))}/>
             : items.length === 0 ? <div className="empty"><div><Search size={30} aria-hidden="true"/><h3>見つかりませんでした</h3><p>{query ? `「${query}」に一致する画像はありません。` : 'まだ画像がありません。'}</p></div></div>
             : <ul className={prefs.layout === 'grid' ? 'project-grid' : 'project-list'}>
-              {items.map(project => <ProjectCard key={project.id} project={project} onOpen={() => onOpen(project)} onFavorite={() => onUpdate({ ...project, favorite: !project.favorite })} onRename={() => setRenaming(project)} onDelete={() => setDeleting(project)} onExport={() => onExport(project)}/>)}
+              {items.map((project, index) => <ProjectCard key={project.id} index={index} project={project} onOpen={() => onOpen(project)} onFavorite={() => onUpdate({ ...project, favorite: !project.favorite })} onRename={() => setRenaming(project)} onDelete={() => setDeleting(project)} onExport={() => onExport(project)}/>)}
             </ul>}
         </div>
       </div>
@@ -118,7 +118,7 @@ function useObjectUrl(blob?: Blob) {
   return url;
 }
 
-function ProjectCard({ project, onOpen, onFavorite, onRename, onDelete, onExport }: { project: Project; onOpen: () => void; onFavorite: () => void; onRename: () => void; onDelete: () => void; onExport: () => void }) {
+function ProjectCard({ project, index, onOpen, onFavorite, onRename, onDelete, onExport }: { project: Project; index: number; onOpen: () => void; onFavorite: () => void; onRename: () => void; onDelete: () => void; onExport: () => void }) {
   const url = useObjectUrl(project.thumbnail);
   const [menu, setMenu] = useState(false);
   const ref = useRef<HTMLLIElement>(null);
@@ -128,7 +128,7 @@ function ProjectCard({ project, onOpen, onFavorite, onRename, onDelete, onExport
     window.addEventListener('pointerdown', close); window.addEventListener('keydown', close);
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
   }, [menu]);
-  return <li ref={ref} className={`project${menu ? ' menu-open' : ''}`}>
+  return <li ref={ref} className={`project${menu ? ' menu-open' : ''}`} style={{ '--i': Math.min(index, 16) } as React.CSSProperties}>
     <button type="button" className="project-open" onClick={onOpen} aria-label={`${project.name}を開く`}>
       <span className="project-thumb">{url && <img src={url} alt="" draggable={false}/>}</span>
       <span className="project-info"><span className="project-name">{project.name}</span><span className="project-meta num">{project.width} × {project.height} · {formatBytes(project.size)}</span></span>

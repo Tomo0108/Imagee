@@ -22,7 +22,13 @@ export default function App() {
   const [busy, setBusy] = useState(0);
 
   useEffect(() => { readProjects().then(setProjects).catch(() => { setProjects([]); setToast('ライブラリを読み込めませんでした。'); }); }, []);
-  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 3600); return () => clearTimeout(timer); }, [toast]);
+  const [toastLeaving, setToastLeaving] = useState(false);
+  useEffect(() => {
+    if (!toast) return;
+    setToastLeaving(false);
+    const leave = setTimeout(() => setToastLeaving(true), 3400), timer = setTimeout(() => setToast(''), 3600);
+    return () => { clearTimeout(leave); clearTimeout(timer); };
+  }, [toast]);
 
   useEffect(() => {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* Private mode: preferences last for this session. */ }
@@ -90,6 +96,6 @@ export default function App() {
       ? <Editor key={open.id} project={open} prefs={prefs} onClose={() => setOpenId(null)} onUpdate={update} onToast={setToast} onSettings={() => setSettings(true)} onAddImage={file => void importFiles([file], true)}/>
       : <Library projects={projects} prefs={prefs} busy={busy} onPrefs={setPrefs} onImport={importFiles} onOpen={project => { update({ ...project, opened: Date.now() }); setOpenId(project.id); }} onUpdate={update} onRemove={remove} onSettings={() => setSettings(true)} onExport={project => void exportProject(project)} onToast={setToast}/>}
     {settings && <Settings prefs={prefs} onChange={setPrefs} onClose={() => setSettings(false)}/>}
-    {toast && <div className="toast" role="status">{toast}</div>}
+    {toast && <div className="toast" role="status" key={toast} data-leaving={toastLeaving ? '' : undefined}>{toast}</div>}
   </>;
 }

@@ -34,13 +34,15 @@ export interface ShapeLayer extends LayerBase { kind: 'shape'; shape: ShapeProps
 export interface AdjustLayer extends LayerBase { kind: 'adjust'; basic: Adjustments; color: ColorOps }
 export type Layer = RasterLayer | TextLayer | ShapeLayer | AdjustLayer;
 export interface Doc { width: number; height: number; layers: Layer[]; selected: string; adjust: Adjustments; color: ColorOps; geometry: Geometry }
-export type SavedEdits = Pick<Doc, 'layers' | 'adjust' | 'geometry'> & { selected?: string; color?: ColorOps };
+export type SavedEdits = Pick<Doc, 'layers' | 'adjust' | 'geometry'> & { selected?: string; color?: ColorOps; width?: number; height?: number };
 
 export const maskKey = (id: string) => `${id}#mask`;
 
 export function createDoc(width: number, height: number, background: RasterLayer, saved?: Partial<SavedEdits>): Doc {
   // Layers saved before phase 3 have no kind or position: they are raster layers at the origin.
   const layers = saved?.layers?.length ? saved.layers.map(layer => normalizeLayer({ kind: 'raster', rev: 0, x: 0, y: 0, ...(layer as object) } as Layer)) : [background];
+  // A document resized in the editor keeps its own size; the original image stays as it was imported.
+  if (saved?.width && saved.height && saved.layers?.length) { width = saved.width; height = saved.height; }
   return {
     width, height, layers,
     selected: saved?.selected && layers.some(l => l.id === saved.selected) ? saved.selected : layers[layers.length - 1].id,
@@ -49,7 +51,7 @@ export function createDoc(width: number, height: number, background: RasterLayer
     geometry: saved?.geometry ? { ...IDENTITY, ...saved.geometry } : IDENTITY,
   };
 }
-export function savedEdits(doc: Doc): SavedEdits { return { layers: doc.layers, adjust: doc.adjust, color: doc.color, geometry: doc.geometry, selected: doc.selected }; }
+export function savedEdits(doc: Doc): SavedEdits { return { layers: doc.layers, adjust: doc.adjust, color: doc.color, geometry: doc.geometry, selected: doc.selected, width: doc.width, height: doc.height }; }
 function normalizeLayer(layer: Layer): Layer {
   return layer.kind === 'adjust' ? { ...layer, basic: normalizeAdjustments(layer.basic), color: normalizeColor(layer.color) } : layer;
 }

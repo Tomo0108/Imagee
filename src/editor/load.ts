@@ -19,9 +19,9 @@ export async function loadDoc(project: Project, store: PixelStore, cancelled: ()
   if (original) project = { ...project, edits: undefined };
   const [bitmap, pixels] = await Promise.all([decode(blob), original ? new Map<string, Blob>() : readPixels(project.id).catch(() => new Map<string, Blob>())]);
   if (cancelled()) { bitmap.close(); return null; }
-  const { width, height } = bitmap;
   const background: RasterLayer = { kind: 'raster', id: 'background', name: '背景', visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: 0 };
-  const initial = createDoc(width, height, background, project.edits);
+  const initial = createDoc(bitmap.width, bitmap.height, background, project.edits);
+  const { width, height } = initial;
   const restore = async (key: string) => { const saved = pixels.get(key); return saved ? decode(saved).catch(() => undefined) : undefined; };
   const layers: Layer[] = [];
   try {

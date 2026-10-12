@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { X, type LucideIcon } from 'lucide-react';
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -36,7 +36,19 @@ export function IconButton({ icon: Icon, label, onClick, active, disabled, size 
 }
 
 export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: ReactNode; title?: string }[]; onChange: (value: T) => void; label: string }) {
-  return <div className="segmented" role="radiogroup" aria-label={label}>
+  // The selected pill is drawn behind the buttons and glides to the chosen one.
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const group = ref.current, on = group?.querySelector<HTMLElement>('button.on');
+    if (!group || !on) { group?.removeAttribute('data-glide'); return; }
+    const place = () => { group.style.setProperty('--seg-x', `${on.offsetLeft}px`); group.style.setProperty('--seg-w', `${on.offsetWidth}px`); };
+    place();
+    group.setAttribute('data-glide', '');
+    const observer = new ResizeObserver(place);
+    observer.observe(group);
+    return () => observer.disconnect();
+  }, [value, options.length]);
+  return <div className="segmented" role="radiogroup" aria-label={label} ref={ref}>
     {options.map(option => <button type="button" key={option.value} role="radio" aria-checked={value === option.value} title={option.title} className={value === option.value ? 'on' : ''} onClick={() => onChange(option.value)}>{option.label}</button>)}
   </div>;
 }

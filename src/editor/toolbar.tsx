@@ -67,29 +67,52 @@ export function ToolRail({ tool, onTool, colors, onColors }: { tool: Tool; onToo
   </nav>;
 }
 
-const HINTS: Partial<Record<Tool, string>> = {
-  move: 'ドラッグで選択中のレイヤーを移動（矢印キーで 1px、Shift で 10px）',
-  eyedropper: 'クリックで描画色、Alt+クリックで背景色を取得',
-  hand: 'ドラッグで表示位置を移動。ダブルクリックで全体表示',
-  zoom: 'クリックで拡大、Alt+クリックで縮小',
+/** How each tool works. Shown above the canvas the first time a tool is picked, and always in the help. */
+export const TOOL_HINTS: Record<Tool, string> = {
+  move: 'ドラッグで選択中のレイヤーを移動します。矢印キーで 1px、Shift を押しながらで 10px ずつ動きます。',
+  marquee: 'ドラッグで長方形の範囲を選択します。Shift で追加、Alt で除外できます。',
+  ellipse: 'ドラッグで楕円形の範囲を選択します。Shift で追加、Alt で除外できます。',
+  lasso: 'ドラッグして囲んだ範囲を選択します。',
+  wand: 'クリックした場所と近い色の部分をまとめて選択します。許容値で広さを調整できます。',
+  brush: 'ドラッグで描画色を塗ります。[ と ] キーでブラシのサイズを変えられます。',
+  eraser: 'ドラッグした部分を透明にします。[ と ] キーでサイズを変えられます。',
+  heal: '消したい部分をなぞると、周りから自然に補います。',
+  remove: '消したいものを覆うようになぞると、周りの景色で埋めます。',
+  clone: 'Alt+クリックでコピー元を指定し、ドラッグで描き写します。',
+  fill: 'クリックした場所と近い色の部分を描画色で塗りつぶします。',
+  gradient: 'ドラッグした向きに、描画色から背景色へのグラデーションを描きます。',
+  eyedropper: 'クリックで描画色、Alt+クリックで背景色を取得します。',
+  text: 'クリックで文字を追加します。既存のテキストをクリックすると編集できます。',
+  shape: 'ドラッグで図形を描きます。色や大きさはあとから変えられます。',
+  crop: '枠の角や辺をドラッグして切り抜きます。角度のスライダーで傾きを直せます。',
+  hand: 'ドラッグで表示位置を移動します。ダブルクリックで全体を表示します。',
+  zoom: 'クリックで拡大、Alt+クリックで縮小します。',
 };
 
-export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectionCommand, onRefine }: { tool: Tool; settings: ToolSettings; onChange: (patch: Partial<ToolSettings>) => void; hasSelection: boolean; onSelectionCommand: (command: 'all' | 'none' | 'invert') => void; onRefine: (op: Refine, radius: number) => void }) {
+/** Tools seen before: their hint is not shown again (it stays in the help). */
+const SEEN_KEY = 'imagee-seen-hints';
+export function hintSeen(tool: Tool): boolean {
+  try {
+    const seen: string[] = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]');
+    if (seen.includes(tool)) return true;
+    localStorage.setItem(SEEN_KEY, JSON.stringify([...seen, tool]));
+  } catch { /* Without storage the hint shows once per session. */ }
+  return false;
+}
+
+export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectionCommand, onRefine, hint, onHelp }: { tool: Tool; settings: ToolSettings; onChange: (patch: Partial<ToolSettings>) => void; hasSelection: boolean; onSelectionCommand: (command: 'all' | 'none' | 'invert') => void; onRefine: (op: Refine, radius: number) => void; hint: boolean; onHelp: () => void }) {
   const [radius, setRadius] = useState(8);
   if (tool === 'crop') return null;
   const brushKey = tool === 'remove' ? 'heal' : tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush';
   const brush = settings[brushKey];
   const setBrush = (patch: Partial<BrushOptions>) => onChange({ [brushKey]: { ...brush, ...patch } });
-  let body: React.ReactNode = HINTS[tool] && <span className="options-hint">{HINTS[tool]}</span>;
+  let body: React.ReactNode = null;
   if (tool === 'brush' || tool === 'eraser' || tool === 'heal' || tool === 'remove' || tool === 'clone') body = <>
     <div className="opt-slider"><Slider label="サイズ" value={brush.size} min={1} max={500} unit="px" onChange={size => setBrush({ size })}/></div>
     <div className="opt-slider"><Slider label="硬さ" value={brush.hardness} min={0} max={100} unit="%" onChange={hardness => setBrush({ hardness })}/></div>
     {tool !== 'heal' && tool !== 'remove' && <div className="opt-slider"><Slider label="不透明度" value={brush.opacity} min={1} max={100} unit="%" onChange={opacity => setBrush({ opacity })}/></div>}
     {(tool === 'brush' || tool === 'eraser') && <label className="opt-toggle" title="ペンの筆圧でサイズを変える"><span>筆圧</span><Toggle label="筆圧でサイズを変える" checked={brush.pressureSize} onChange={pressureSize => setBrush({ pressureSize })}/></label>}
     {tool === 'clone' && <label className="opt-toggle" title="オフにすると選択中のレイヤーだけからコピー"><span>全レイヤーから</span><Toggle label="全レイヤーからコピー" checked={settings.cloneAll} onChange={cloneAll => onChange({ cloneAll })}/></label>}
-    {tool === 'clone' && <span className="options-hint">Alt+クリックでコピー元を指定</span>}
-    {tool === 'heal' && <span className="options-hint">消したい部分をなぞると、周りから自然に補います</span>}
-    {tool === 'remove' && <span className="options-hint">消したいものを覆うようになぞると、周りの景色で埋めます</span>}
   </>;
   else if (tool === 'marquee' || tool === 'ellipse' || tool === 'lasso' || tool === 'wand') body = <>
     <Segmented label="選択の方法" value={settings.selectMode} onChange={selectMode => onChange({ selectMode })} options={[
@@ -123,7 +146,7 @@ export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectio
     <div className="opt-slider"><Slider label="線の太さ" value={settings.strokeWidth} min={1} max={200} unit="px" onChange={strokeWidth => onChange({ strokeWidth })}/></div>
     {settings.shape === 'rect' && <div className="opt-slider"><Slider label="角の丸み" value={settings.radius} min={0} max={500} unit="px" onChange={radius => onChange({ radius })}/></div>}
   </>;
-  else if (tool === 'text') body = <span className="options-hint">クリックで文字を追加。既存のテキストをクリックすると編集できます。</span>;
-  if (!body) return null;
-  return <div className="tool-options" role="toolbar" aria-label="ツールの設定">{body}</div>;
+  const tip = hint && <span className="options-hint first-hint" key={`hint-${tool}`}>{TOOL_HINTS[tool]}<button type="button" className="link-btn" onClick={onHelp}>ヘルプ</button></span>;
+  if (!body && !tip) return null;
+  return <div className="tool-options" role="toolbar" aria-label="ツールの設定" key={tool}>{body}{tip}</div>;
 }

@@ -48,7 +48,13 @@ try {
   await page.waitForTimeout(300);
   const zoom = await page.locator('.zoom-readout').textContent();
   assert.notEqual(zoom, '100%', 'large image should open fitted to the window');
+  // A tool's hint shows above the canvas the first time only; afterwards it lives in the help.
+  assert.match(await page.locator('.first-hint').textContent(), /表示位置を移動/);
   await page.screenshot({ path: `${out}/editor-dark.png` });
+  await page.keyboard.press('b');
+  assert.match(await page.locator('.first-hint').textContent(), /描画色を塗ります/);
+  await page.keyboard.press('h');
+  assert.equal(await page.locator('.first-hint').count(), 0, 'hint is not shown again');
   await page.keyboard.press('Control+1');
   assert.equal(await page.locator('.zoom-readout').textContent(), '100%');
   await page.keyboard.press('Control+0');
@@ -95,6 +101,47 @@ try {
   await page.locator('.export-summary b', { hasText: /KB|MB/ }).waitFor();
   await page.screenshot({ path: `${out}/export-dark.png` });
   await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+
+  // Feature search: a few characters in kana or romaji find canvas size; it and image size resize the document.
+  const outputSize = async () => (await page.locator('.doc-title span').textContent()).split('×').map(v => Number(v.trim()));
+  const [cropW, cropH] = await outputSize();
+  await page.keyboard.press('Control+k');
+  await page.locator('.palette input').fill('きゃ');
+  assert.match(await page.locator('.palette-item.on').textContent(), /キャンバスサイズを変更/);
+  await page.locator('.palette input').fill('kya');
+  assert.match(await page.locator('.palette-item.on').textContent(), /キャンバスサイズを変更/);
+  await page.screenshot({ path: `${out}/palette-dark.png` });
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'キャンバスサイズ' }).waitFor();
+  await page.getByRole('spinbutton', { name: '幅' }).fill('1800');
+  await page.getByRole('radio', { name: '背景色' }).click();
+  await page.screenshot({ path: `${out}/resize-canvas-dark.png` });
+  await page.getByRole('button', { name: '変更する' }).click();
+  await page.waitForTimeout(400);
+  const [grownW, grownH] = await outputSize();
+  // The crop is reset; the straightening angle stays, so the output is the largest 18:10 area inside it.
+  assert.ok(grownW > cropW && Math.abs(grownW / grownH - 1.8) < 0.01, `canvas grew and the crop was reset: ${grownW}×${grownH}`);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  assert.deepEqual(await outputSize(), [cropW, cropH], 'undo restores the size');
+  await page.keyboard.press('Control+k');
+  await page.locator('.palette input').fill('resize');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: '50%' }).click();
+  await page.getByRole('button', { name: '変更する' }).click();
+  await page.waitForTimeout(400);
+  const [halfW, halfH] = await outputSize();
+  assert.ok(Math.abs(halfW - cropW / 2) <= 1 && Math.abs(halfH - cropH / 2) <= 1, `image size halves the crop too: ${halfW}×${halfH}`);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  // Help holds what used to be fixed text.
+  await page.keyboard.press('Shift+?');
+  await page.getByRole('dialog', { name: 'ヘルプ' }).waitFor();
+  assert.match(await page.locator('.help-tools').textContent(), /Alt\+クリックで背景色を取得/);
+  await page.screenshot({ path: `${out}/help-dark.png` });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
 
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.waitForTimeout(800);
@@ -233,7 +280,9 @@ try {
   await page.mouse.click(cx + 100, cy - 150);
   await page.keyboard.up('Alt');
   await drag([cx + 100, cy + 250], [cx + 110, cy + 250], 3);
-  assert.ok(isRed(await pixel(cx + 104, cy + 250)), 'clone stamp copies the source');
+  // A soft (50% hardness) stamp: the copy is red, slightly blended at the edge.
+  const stamped = ([r, g, b]) => r > 170 && g < 80 && b < 80;
+  assert.ok(stamped(await pixel(cx + 104, cy + 250)), `clone stamp copies the source: ${await pixel(cx + 104, cy + 250)}`);
   await page.screenshot({ path: `${out}/editor-heal-clone-dark.png` });
 
   // Refining a selection: grow by 8 px on each side.
@@ -281,7 +330,7 @@ try {
   await page.locator('.stage canvas').waitFor();
   await page.waitForTimeout(500);
   assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', '調整レイヤー 1', 'レイヤー 1', '背景'], '.imagee keeps every layer');
-  assert.ok(isRed(await pixel(cx + 104, cy + 250)), '.imagee keeps painted pixels');
+  assert.ok(stamped(await pixel(cx + 104, cy + 250)), '.imagee keeps painted pixels');
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
 
   // Batch: crop two images to 1:1, fit the long side to 400 px, add a watermark and save them as one zip.
