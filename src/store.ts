@@ -2,13 +2,15 @@ export interface Project { id: string; name: string; type: string; size: number;
 
 // Image bytes are stored once in `sources`; library reads and edits only touch metadata.
 const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-  const request = indexedDB.open('imagee-library', 2);
+  const request = indexedDB.open('imagee-library', 3);
   request.onupgradeneeded = () => {
     const db = request.result;
     if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
     if (!db.objectStoreNames.contains('sources')) db.createObjectStore('sources', { keyPath: 'id' });
     // Painted layer pixels, keyed "<project id>/<surface key>".
     if (!db.objectStoreNames.contains('pixels')) db.createObjectStore('pixels', { keyPath: 'id' });
+    // Imported .cube colour tables, shared by all projects.
+    if (!db.objectStoreNames.contains('luts')) db.createObjectStore('luts', { keyPath: 'id' });
   };
   request.onsuccess = () => { const db = request.result; db.onversionchange = () => db.close(); resolve(db); };
   request.onerror = () => reject(request.error);
@@ -70,5 +72,25 @@ export async function writePixels(projectId: string, changed: Map<string, Blob>,
   const store = transaction.objectStore('pixels');
   for (const [key, blob] of changed) store.put({ id: `${projectId}/${key}`, blob });
   for (const id of existing) if (!keep.has(id.slice(projectId.length + 1))) store.delete(id);
+  await done;
+}
+
+export interface StoredLut { id: string; name: string; size: number; data: Float32Array }
+export async function readLuts(): Promise<StoredLut[]> {
+  const db = await dbPromise;
+  return result(db.transaction('luts').objectStore('luts').getAll());
+}
+export async function addLut(lut: StoredLut): Promise<void> {
+  const db = await dbPromise;
+  const transaction = db.transaction('luts', 'readwrite');
+  const done = completed(transaction);
+  transaction.objectStore('luts').put(lut);
+  await done;
+}
+export async function removeLut(id: string): Promise<void> {
+  const db = await dbPromise;
+  const transaction = db.transaction('luts', 'readwrite');
+  const done = completed(transaction);
+  transaction.objectStore('luts').delete(id);
   await done;
 }

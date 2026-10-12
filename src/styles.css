@@ -513,3 +513,42 @@ html[data-theme="light"] .histogram .h-b { fill: rgba(10, 132, 255, .35); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; } }
 .crop-bar .select { white-space: nowrap; }
 .app.editor ~ .toast { bottom: auto; top: 68px; }
+
+/* ---------- Colour tools (phase 4) ---------- */
+
+.btn.small { height: 26px; padding: 0 10px; font-size: var(--type-caption); }
+.adjust-scope { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 10px; padding: 8px 10px; border-radius: 10px; font-size: var(--type-caption); color: var(--label); background: color-mix(in srgb, var(--a1) 16%, transparent); }
+.adjust-section { border-top: 0.5px solid var(--sep); padding: 4px 2px; }
+.adjust-section > summary { display: flex; align-items: center; gap: 6px; padding: 8px 0; cursor: pointer; list-style: none; font-size: 11.5px; font-weight: 600; color: var(--label-3); }
+.adjust-section > summary::-webkit-details-marker { display: none; }
+.adjust-section > summary::after { content: ''; margin-left: auto; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform var(--t-fast); }
+.adjust-section[open] > summary::after { transform: rotate(45deg); }
+.adjust-section[open] { padding-bottom: 14px; }
+.adjust-section .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--a1); }
+.curve-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.curve-head .segmented button { padding: 2px 9px; }
+.curve-graph { display: block; width: 100%; aspect-ratio: 1; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 0.5px var(--surface-edge); touch-action: none; cursor: crosshair; overflow: visible; }
+.curve-histogram { fill: var(--fill); }
+.curve-grid { stroke: var(--sep); stroke-width: 1; }
+.curve-line { fill: none; stroke-width: 2; }
+.curve-point { fill: var(--surface); stroke-width: 2; cursor: grab; }
+.levels-editor, .hsl-editor, .lut-picker { display: grid; gap: 12px; }
+.levels-ramp { position: relative; height: 10px; border-radius: 5px; background: linear-gradient(90deg, #000, #fff); box-shadow: inset 0 0 0 0.5px var(--surface-edge); }
+.levels-ramp span { position: absolute; top: -3px; width: 2px; height: 16px; margin-left: -1px; background: var(--a1); border-radius: 1px; }
+.hsl-bands { display: flex; justify-content: space-between; gap: 4px; }
+.hsl-band { width: 24px; height: 24px; border-radius: 50%; position: relative; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, .2); transition: transform var(--t-fast), box-shadow var(--t-fast); }
+.hsl-band.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--a1); transform: scale(1.05); }
+.hsl-band.changed::after { content: ''; position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--a1); box-shadow: 0 0 0 1.5px var(--surface); }
+.presets { display: grid; gap: 8px; }
+.preset-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.preset { position: relative; }
+.preset-main { width: 100%; display: grid; gap: 4px; padding: 3px; border-radius: 9px; font-size: 11px; color: var(--label-2); text-align: center; transition: background var(--t-fast); }
+.preset-main:hover { background: var(--hover); }
+.preset.on .preset-main { background: color-mix(in srgb, var(--a1) 18%, transparent); color: var(--label); font-weight: 600; }
+.preset-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-thumb { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: var(--fill-2); }
+.preset-delete { position: absolute; top: 0; right: 0; width: 18px; height: 18px; display: none; place-items: center; border-radius: 50%; color: #fff; background: rgba(0, 0, 0, .6); }
+.preset:hover .preset-delete, .preset-delete:focus-visible { display: grid; }
+.preset-save { display: flex; gap: 6px; }
+.preset-save input { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 0; border-radius: 7px; background: var(--fill-2); color: var(--label); font: inherit; font-size: var(--type-caption); }
+.adjust-thumb { display: grid; place-items: center; color: var(--a1); background: color-mix(in srgb, var(--a1) 14%, transparent); }

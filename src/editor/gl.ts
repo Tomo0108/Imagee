@@ -1,9 +1,14 @@
 import { adjustPixel, type Adjustments } from '../lib/adjust.mjs';
+import { sampleBaked } from '../lib/color.mjs';
+import { uploadLut, type BakedLut } from './lut';
 
 // Mirrors adjustPixel in src/lib/adjust.mjs; keep the two in step.
 const FRAGMENT = `#version 300 es
 precision highp float;
+precision highp sampler3D;
 uniform sampler2D image;
+uniform sampler3D lut;
+uniform float lutSize;
 uniform float exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, vibrance, saturation;
 in vec2 uv;
 out vec4 color;
@@ -25,6 +30,8 @@ void main() {
   float chroma = max(max(x.r, x.g), x.b) - min(min(x.r, x.g), x.b);
   float amount = max(0.0, 1.0 + saturation / 100.0 + vibrance / 100.0 * (1.0 - chroma));
   x = clamp(mix(vec3(l2), x, amount), 0.0, 1.0);
+  // Curves, levels, HSL and LUTs, baked into one table.
+  if (lutSize > 0.0) x = texture(lut, x * ((lutSize - 1.0) / lutSize) + 0.5 / lutSize).rgb;
   color = vec4(x * texel.a, texel.a);
 }`;
 const VERTEX = `#version 300 es
@@ -68,6 +75,13 @@ export class Adjuster {
     gl.enableVertexAttribArray(position);
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
     for (const name of UNIFORMS) this.locations.set(name, gl.getUniformLocation(program, name));
+    gl.uniform1i(gl.getUniformLocation(program, 'image'), 0);
+    gl.uniform1i(gl.getUniformLocation(program, 'lut'), 1);
+    this.lutSizeLocation = gl.getUniformLocation(program, 'lutSize');
+    this.lutTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    uploadLut(gl, this.lutTexture!, { table: new Uint8Array(2 * 2 * 2 * 4), size: 2 });
+    gl.activeTexture(gl.TEXTURE0);
     this.texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     for (const [key, value] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, key, value);
@@ -111,6 +125,21 @@ export class Adjuster {
     }
   }
   private dirty: { x: number; y: number; w: number; h: number } | null = null;
+  private lut: BakedLut | null = null;
+  private lutTexture: WebGLTexture | null = null;
+  private lutSizeLocation: WebGLUniformLocation | null = null;
+
+  /** Sets the colour table applied after the basic adjustments (null for none). */
+  setLut(lut: BakedLut | null) {
+    if (lut === this.lut) return;
+    this.lut = lut; this.lastAdjustments = null;
+    const gl = this.gl;
+    if (!gl) return;
+    gl.activeTexture(gl.TEXTURE1);
+    if (lut) uploadLut(gl, this.lutTexture!, lut);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1f(this.lutSizeLocation, lut ? lut.size : 0);
+  }
   private lastAdjustments: Adjustments | null = null;
 
   render(adjustments: Adjustments): HTMLCanvasElement {
@@ -130,6 +159,7 @@ export class Adjuster {
         if (!d[i + 3]) continue;
         const [r, g, b] = adjustPixel([d[i] / 255, d[i + 1] / 255, d[i + 2] / 255], adjustments);
         d[i] = r * 255; d[i + 1] = g * 255; d[i + 2] = b * 255;
+        if (this.lut) sampleBaked(this.lut.table, this.lut.size, d[i], d[i + 1], d[i + 2], d, i);
       }
       this.canvas.getContext('2d')!.putImageData(out, box.x, box.y);
       this.dirty = null; this.lastAdjustments = adjustments;

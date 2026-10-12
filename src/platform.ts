@@ -17,6 +17,17 @@ export function pickImages(): Promise<File[]> {
   });
 }
 
+/** Picks one file of any type through a file input (used for .cube LUTs and project files). */
+export function pickFile(accept: string): Promise<File | null> {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = accept;
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 /** Files passed by the OS: "Open with" on desktop, or the PWA file handler on the web. */
 export function onLaunchImages(callback: (files: File[]) => void): () => void {
   if (native) {

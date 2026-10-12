@@ -1,7 +1,9 @@
-import { NEUTRAL, normalizeAdjustments, type Adjustments } from '../lib/adjust.mjs';
+import { adjustPixel, isNeutral, NEUTRAL, normalizeAdjustments, type Adjustments } from '../lib/adjust.mjs';
+import { bakeLut, colorFunction, isNeutralColor, normalizeColor, type ColorOps, type Cube } from '../lib/color.mjs';
 import { effectiveCrop, IDENTITY, sourceMatrix, type Geometry } from '../lib/geometry.mjs';
 import { canvas } from '../imaging';
 import type { Box, PixelStore } from './pixels';
+import { lutPass, type BakedLut } from './lut';
 
 export type BlendMode = 'source-over' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
 export const BLEND_MODES: { value: BlendMode; label: string }[] = [
@@ -28,23 +30,37 @@ interface LayerBase { id: string; name: string; visible: boolean; opacity: numbe
 export interface RasterLayer extends LayerBase { kind: 'raster'; rev: number }
 export interface TextLayer extends LayerBase { kind: 'text'; text: TextProps }
 export interface ShapeLayer extends LayerBase { kind: 'shape'; shape: ShapeProps }
-export type Layer = RasterLayer | TextLayer | ShapeLayer;
-export interface Doc { width: number; height: number; layers: Layer[]; selected: string; adjust: Adjustments; geometry: Geometry }
-export type SavedEdits = Pick<Doc, 'layers' | 'adjust' | 'geometry'> & { selected?: string };
+/** Changes the colours of everything below it, through its mask. Nothing is baked into pixels. */
+export interface AdjustLayer extends LayerBase { kind: 'adjust'; basic: Adjustments; color: ColorOps }
+export type Layer = RasterLayer | TextLayer | ShapeLayer | AdjustLayer;
+export interface Doc { width: number; height: number; layers: Layer[]; selected: string; adjust: Adjustments; color: ColorOps; geometry: Geometry }
+export type SavedEdits = Pick<Doc, 'layers' | 'adjust' | 'geometry'> & { selected?: string; color?: ColorOps };
 
 export const maskKey = (id: string) => `${id}#mask`;
 
 export function createDoc(width: number, height: number, background: RasterLayer, saved?: Partial<SavedEdits>): Doc {
   // Layers saved before phase 3 have no kind or position: they are raster layers at the origin.
-  const layers = saved?.layers?.length ? saved.layers.map(layer => ({ kind: 'raster', rev: 0, x: 0, y: 0, ...(layer as object) }) as Layer) : [background];
+  const layers = saved?.layers?.length ? saved.layers.map(layer => normalizeLayer({ kind: 'raster', rev: 0, x: 0, y: 0, ...(layer as object) } as Layer)) : [background];
   return {
     width, height, layers,
     selected: saved?.selected && layers.some(l => l.id === saved.selected) ? saved.selected : layers[layers.length - 1].id,
     adjust: normalizeAdjustments(saved?.adjust ?? NEUTRAL),
+    color: normalizeColor(saved?.color),
     geometry: saved?.geometry ? { ...IDENTITY, ...saved.geometry } : IDENTITY,
   };
 }
-export function savedEdits(doc: Doc): SavedEdits { return { layers: doc.layers, adjust: doc.adjust, geometry: doc.geometry, selected: doc.selected }; }
+export function savedEdits(doc: Doc): SavedEdits { return { layers: doc.layers, adjust: doc.adjust, color: doc.color, geometry: doc.geometry, selected: doc.selected }; }
+function normalizeLayer(layer: Layer): Layer {
+  return layer.kind === 'adjust' ? { ...layer, basic: normalizeAdjustments(layer.basic), color: normalizeColor(layer.color) } : layer;
+}
+
+/** The colour function of an adjustment layer or of the document's global colour settings. */
+export function colorStage(basic: Adjustments | null, color: ColorOps, cube: Cube | undefined): ((rgb: number[]) => number[]) | null {
+  const useBasic = basic && !isNeutral(basic), useColor = !isNeutralColor(color);
+  if (!useBasic && !useColor) return null;
+  const graded = useColor ? colorFunction(color, cube) : null;
+  return rgb => { const a = useBasic ? adjustPixel(rgb, basic!) : rgb; return graded ? graded(a) : a; };
+}
 
 export function newLayerId() { return `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`; }
 export function uniqueName(layers: Layer[], base: string) {
@@ -109,7 +125,11 @@ export function renderShape(s: ShapeProps): { canvas: HTMLCanvasElement; ox: num
 /** Vector layers are re-rendered only when their properties change. */
 export class LayerCache {
   private entries = new Map<string, { key: string; canvas: HTMLCanvasElement; dx: number; dy: number }>();
+  private luts = new Map<string, { key: string; lut: BakedLut | null }>();
+  /** Imported LUTs by id, for colour settings that refer to one. */
+  cubes = new Map<string, Cube>();
   source(layer: Layer, store: PixelStore): { canvas: CanvasImageSource & { width: number; height: number }; x: number; y: number } | null {
+    if (layer.kind === 'adjust') return null;
     if (layer.kind === 'raster') { const c = store.get(layer.id); return c ? { canvas: c, x: layer.x, y: layer.y } : null; }
     const key = JSON.stringify(layer.kind === 'text' ? layer.text : layer.shape);
     let entry = this.entries.get(layer.id);
@@ -120,6 +140,18 @@ export class LayerCache {
     }
     return { canvas: entry.canvas, x: layer.x + entry.dx, y: layer.y + entry.dy };
   }
+  /** Baked colour table for an adjustment layer (or the global settings under the id ''); null when it changes nothing. */
+  lut(id: string, basic: Adjustments | null, color: ColorOps): BakedLut | null {
+    const cube = color.lut ? this.cubes.get(color.lut.id) : undefined;
+    const key = JSON.stringify([basic, color, !!cube]);
+    let entry = this.luts.get(id);
+    if (!entry || entry.key !== key) {
+      const fn = colorStage(basic, color, cube);
+      entry = { key, lut: fn && { table: bakeLut(fn, 33), size: 33 } };
+      this.luts.set(id, entry);
+    }
+    return entry.lut;
+  }
   /** Bounds of a layer's visible content in document coordinates. */
   bounds(layer: Layer, store: PixelStore): Box | null {
     const s = this.source(layer, store);
@@ -128,7 +160,8 @@ export class LayerCache {
 }
 
 /** Draws one layer (with its mask) into `context`, whose units are document pixels × k. */
-function drawLayer(context: CanvasRenderingContext2D, layer: Layer, store: PixelStore, cache: LayerCache, k: number, scratch: () => CanvasRenderingContext2D) {
+function drawLayer(context: CanvasRenderingContext2D, layer: Layer, store: PixelStore, cache: LayerCache, k: number, scratch: () => CanvasRenderingContext2D, area: Box) {
+  if (layer.kind === 'adjust') return drawAdjustment(context, layer, store, cache, k, scratch, area);
   const source = cache.source(layer, store);
   if (!source) return;
   const mask = layer.mask?.enabled ? store.get(maskKey(layer.id)) : undefined;
@@ -145,15 +178,40 @@ function drawLayer(context: CanvasRenderingContext2D, layer: Layer, store: Pixel
   context.globalAlpha = 1; context.globalCompositeOperation = 'source-over';
 }
 
+/** Grades what is already in `context` within `area` (target pixels). With a mask or partial opacity the result is
+ *  target × (1 − a·m) + graded × a·m, done with destination-out and additive drawing so alpha is preserved exactly. */
+function drawAdjustment(context: CanvasRenderingContext2D, layer: AdjustLayer, store: PixelStore, cache: LayerCache, k: number, scratch: () => CanvasRenderingContext2D, area: Box) {
+  const lut = cache.lut(layer.id, layer.basic, layer.color);
+  if (!lut) return;
+  const graded = lutPass().apply(context.canvas, area, lut);
+  const mask = layer.mask?.enabled ? store.get(maskKey(layer.id)) : undefined;
+  if (!mask && layer.opacity >= 100) { context.clearRect(area.x, area.y, area.w, area.h); context.drawImage(graded, area.x, area.y); return; }
+  const s = scratch();
+  s.globalCompositeOperation = 'source-over'; s.globalAlpha = 1;
+  s.drawImage(graded, area.x, area.y);
+  if (mask) { s.globalCompositeOperation = 'destination-in'; s.drawImage(mask, 0, 0, mask.width * k, mask.height * k); }
+  context.save();
+  context.globalAlpha = layer.opacity / 100;
+  context.globalCompositeOperation = 'destination-out';
+  if (mask) context.drawImage(mask, 0, 0, mask.width * k, mask.height * k); else { context.fillStyle = '#000'; context.fillRect(area.x, area.y, area.w, area.h); }
+  context.globalCompositeOperation = 'lighter';
+  context.drawImage(s.canvas, 0, 0);
+  context.restore();
+}
+
 /** Flattens the visible layers. `region` (document pixels) limits the work to an area that changed. */
 export function compositeInto(target: HTMLCanvasElement, doc: Doc, store: PixelStore, cache: LayerCache, region?: Box | null) {
   const k = target.width / doc.width;
   const context = target.getContext('2d')!;
   context.save();
+  let area: Box = { x: 0, y: 0, w: target.width, h: target.height };
   if (region) {
-    const x = Math.floor(region.x * k) - 1, y = Math.floor(region.y * k) - 1, w = Math.ceil(region.w * k) + 2, h = Math.ceil(region.h * k) + 2;
-    context.beginPath(); context.rect(x, y, w, h); context.clip(); context.clearRect(x, y, w, h);
-  } else context.clearRect(0, 0, target.width, target.height);
+    const x = Math.max(0, Math.floor(region.x * k) - 1), y = Math.max(0, Math.floor(region.y * k) - 1);
+    area = { x, y, w: Math.min(target.width, Math.ceil((region.x + region.w) * k) + 1) - x, h: Math.min(target.height, Math.ceil((region.y + region.h) * k) + 1) - y };
+    if (area.w <= 0 || area.h <= 0) { context.restore(); return; }
+    context.beginPath(); context.rect(area.x, area.y, area.w, area.h); context.clip();
+  }
+  context.clearRect(area.x, area.y, area.w, area.h);
   context.imageSmoothingQuality = 'high';
   let scratchCanvas: HTMLCanvasElement | null = null;
   const scratch = () => {
@@ -162,7 +220,7 @@ export function compositeInto(target: HTMLCanvasElement, doc: Doc, store: PixelS
     c.clearRect(0, 0, target.width, target.height);
     return c;
   };
-  for (const layer of doc.layers) if (layer.visible && layer.opacity > 0) drawLayer(context, layer, store, cache, k, scratch);
+  for (const layer of doc.layers) if (layer.visible && layer.opacity > 0) drawLayer(context, layer, store, cache, k, scratch, area);
   context.restore();
 }
 

@@ -10,7 +10,7 @@ import { autoAdjust, NEUTRAL, type Adjustments } from '../lib/adjust.mjs';
 import { ASPECTS, autoCrop, fitAspect, flip, IDENTITY, MAX_ANGLE, orientedSize, outputSize, rotateQuarter, type Rect } from '../lib/geometry.mjs';
 import { floodMask } from '../lib/flood.mjs';
 import { effectivePressure } from '../lib/brush.mjs';
-import { compositeInto, createDoc, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer } from './document';
+import { compositeInto, createDoc, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer, type AdjustLayer } from './document';
 import { PixelStore, union, type Box } from './pixels';
 import { arrayMask, combine, invertSelection, selectAll, shapeMask, type SelectMode, type Selection } from './selection';
 import { bucketFill, editSurface, gradientFill, hexToRgb, rgbToHex, Stroke } from './tools';
@@ -19,7 +19,11 @@ import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from 
 import { ExportSheet } from './ExportSheet';
 import { AdjustPanel, HistoryPanel, InfoPanel, LayersPanel, type LayerActions } from './panels';
 import { loadSettings, storeSettings, ToolOptions, ToolRail, type ToolSettings } from './toolbar';
-import { pickImages } from '../platform';
+import { pickFile, pickImages } from '../platform';
+import { NEUTRAL_COLOR, parseCube, type ColorOps } from '../lib/color.mjs';
+import { addLut, readLuts, removeLut } from '../store';
+import { loadUserPresets, storeUserPresets, type UserPreset } from './color-ui';
+import type { Histogram } from '../imaging';
 import { isImageFile } from '../lib/files.mjs';
 import { IconButton, Slider, mod } from '../ui';
 
@@ -68,6 +72,11 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   const [colors, setColors] = useState<[string, string]>(['#000000', '#ffffff']);
   const [selection, setSelectionState] = useState<Selection | null>(null);
   const [target, setTarget] = useState<'layer' | 'mask'>('layer');
+  const [editImage, setEditImage] = useState(false);
+  const [cubes, setCubes] = useState<{ id: string; name: string }[]>([]);
+  const [cubesVersion, setCubesVersion] = useState(0);
+  const [userPresets, setUserPresets] = useState<UserPreset[]>(loadUserPresets);
+  const [curveHistogram, setCurveHistogram] = useState<Histogram | null>(null);
   const [editText, setEditText] = useState(false);
   const adjuster = useMemo(() => new Adjuster(), []);
   const store = useMemo(() => new PixelStore(), []);
@@ -141,11 +150,17 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     }
     compositeInto(work.current, doc, store, cache);
     adjuster.setSource(work.current);
+    adjuster.setLut(cache.lut('', null, doc.color));
     adjuster.render(doc.adjust);
     composited.current = doc.layers;
     setVersion(v => v + 1);
-  }, [doc?.layers]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (doc && composited.current) { adjuster.render(doc.adjust); setVersion(v => v + 1); } }, [doc?.adjust]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [doc?.layers, cubesVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!doc || !composited.current) return;
+    adjuster.setLut(cache.lut('', null, doc.color));
+    adjuster.render(doc.adjust);
+    setVersion(v => v + 1);
+  }, [doc?.adjust, doc?.color, cubesVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While painting, only the touched area is recomposited, once per frame.
   const frame = useRef(0), pending = useRef<Box | null>(null);
@@ -219,7 +234,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   const selectLayer = useCallback((id: string) => {
     const h = historyRef.current;
     if (h && h.present.selected !== id) apply({ ...h, present: { ...h.present, selected: id } });
-    setEditText(false);
+    setEditText(false); setEditImage(false);
   }, [apply]);
   /** Records that a surface reached a new revision. When the working composite already shows it, skip recompositing. */
   const commitSurface = useCallback((layerId: string, mask: boolean, rev: number, label: string, current: boolean) => {
@@ -263,7 +278,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const layer = d?.layers.find(l => l.id === d.selected);
     if (!d || !layer) return null;
     if (!layer.visible) { onToast('非表示のレイヤーには描けません。'); return null; }
-    if (target === 'mask' && layer.mask) return { key: maskKey(layer.id), layer, mask: true, offset: { x: 0, y: 0 } };
+    if ((target === 'mask' || layer.kind === 'adjust') && layer.mask) return { key: maskKey(layer.id), layer, mask: true, offset: { x: 0, y: 0 } };
+    if (layer.kind === 'adjust') { onToast('調整レイヤーに描くにはマスクを追加してください。'); return null; }
     if (layer.kind === 'raster') return { key: layer.id, layer, mask: false, offset: { x: layer.x, y: layer.y } };
     if (!paints) { onToast('テキストや図形のレイヤーは、ラスタライズすると消去できます。'); return null; }
     const created = newRaster(d);
@@ -489,12 +505,68 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const inner = ratio > 0 && aspectId !== 'original' ? fitAspect({ x: 0, y: 0, w: auto.w, h: auto.h }, ratio, { width: auto.w, height: auto.h }) : null;
     return { ...d, geometry: { ...d.geometry, angle, crop: inner && { ...inner, x: inner.x + auto.x, y: inner.y + auto.y } } };
   }, '角度補正', true);
+  // The adjust panel edits the selected adjustment layer, or the whole image.
+  const adjustLayer = selected?.kind === 'adjust' && !editImage ? selected : null;
+  const adjustTarget = adjustLayer ? { basic: adjustLayer.basic, color: adjustLayer.color } : doc ? { basic: doc.adjust, color: doc.color } : null;
+  const setBasic = useCallback((patch: Partial<Adjustments>, label: string, gesture = false) => {
+    if (adjustLayer) updateLayer(adjustLayer.id, { basic: { ...adjustLayer.basic, ...patch } } as Partial<Layer>, label, gesture);
+    else setAdjust(patch, label, gesture);
+  }, [adjustLayer, updateLayer, setAdjust]);
+  const setColor = useCallback((color: ColorOps, label: string, gesture = false) => {
+    if (adjustLayer) updateLayer(adjustLayer.id, { color } as Partial<Layer>, label, gesture);
+    else change(d => ({ ...d, color }), label, gesture);
+  }, [adjustLayer, updateLayer, change]);
+  const setAdjustState = useCallback((state: { basic: Adjustments; color: ColorOps }, label: string) => {
+    if (adjustLayer) updateLayer(adjustLayer.id, { basic: { ...state.basic, vignette: 0 }, color: state.color } as Partial<Layer>, label);
+    else change(d => ({ ...d, adjust: state.basic, color: state.color }), label);
+  }, [adjustLayer, updateLayer, change]);
   const auto = () => {
-    if (!work.current || !doc) return;
+    if (!work.current || !adjustTarget) return;
     const suggestion = autoAdjust(histogram(work.current).l);
-    setAdjust({ ...NEUTRAL, ...suggestion, temperature: doc.adjust.temperature, tint: doc.adjust.tint, vibrance: doc.adjust.vibrance, saturation: doc.adjust.saturation, vignette: doc.adjust.vignette }, '自動補正');
+    const b = adjustTarget.basic;
+    setBasic({ ...NEUTRAL, ...suggestion, temperature: b.temperature, tint: b.tint, vibrance: b.vibrance, saturation: b.saturation, vignette: b.vignette }, '自動補正');
     onToast('明るさを自動で整えました。');
   };
+  useEffect(() => {
+    if (tab !== 'adjust' || !work.current) return;
+    const timer = setTimeout(() => work.current && setCurveHistogram(histogram(work.current)), 250);
+    return () => clearTimeout(timer);
+  }, [tab, version]);
+  // Imported LUTs are shared by every project.
+  useEffect(() => {
+    void readLuts().then(list => {
+      for (const lut of list) cache.cubes.set(lut.id, { size: lut.size, data: lut.data, title: lut.name });
+      setCubes(list.map(lut => ({ id: lut.id, name: lut.name })));
+      if (list.length) { composited.current = null; setCubesVersion(v => v + 1); }
+    }).catch(() => {});
+  }, [cache]);
+  const importLut = useCallback(async () => {
+    const file = await pickFile('.cube');
+    if (!file) return;
+    try {
+      const cube = parseCube(await file.text());
+      const lut = { id: `lut-${Date.now().toString(36)}`, name: cube.title || file.name.replace(/\.cube$/i, ''), size: cube.size, data: cube.data };
+      await addLut(lut);
+      cache.cubes.set(lut.id, cube);
+      setCubes(list => [...list, { id: lut.id, name: lut.name }]);
+      setCubesVersion(v => v + 1);
+      setColor({ ...(adjustTarget?.color || NEUTRAL_COLOR), lut: { id: lut.id, amount: 100 } }, 'LUT');
+      onToast(`LUT「${lut.name}」を読み込みました。`);
+    } catch (e) { onToast((e as Error).message || 'LUT を読み込めませんでした。'); }
+  }, [cache, setColor, adjustTarget, onToast]);
+  const deleteLut = useCallback((id: string) => {
+    void removeLut(id).then(() => {
+      cache.cubes.delete(id);
+      setCubes(list => list.filter(c => c.id !== id));
+      composited.current = null; setCubesVersion(v => v + 1);
+    });
+  }, [cache]);
+  const savePreset = useCallback((name: string) => {
+    if (!adjustTarget) return;
+    setUserPresets(list => { const next = [{ id: `preset-${Date.now().toString(36)}`, name, basic: adjustTarget.basic, color: adjustTarget.color }, ...list]; storeUserPresets(next); return next; });
+    onToast(`プリセット「${name}」を保存しました。`);
+  }, [adjustTarget, onToast]);
+  const deletePreset = useCallback((id: string) => setUserPresets(list => { const next = list.filter(p => p.id !== id); storeUserPresets(next); return next; }), []);
 
   // Selection commands and edits that use it.
   const selectionCommand = useCallback((command: 'all' | 'none' | 'invert') => {
@@ -598,6 +670,16 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       setTarget('mask');
     },
     removeMask: () => { const d = historyRef.current?.present; if (d) updateLayer(d.selected, { mask: undefined }, 'マスクを削除'); setTarget('layer'); },
+    addAdjust: () => {
+      const d = historyRef.current?.present;
+      if (!d) return;
+      const id = newLayerId();
+      const rev = createMask(store, maskKey(id), d.width, d.height, selectionRef.current?.mask);
+      const layer: AdjustLayer = { kind: 'adjust', id, name: uniqueName(d.layers, '調整レイヤー'), visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, basic: NEUTRAL, color: NEUTRAL_COLOR, mask: { rev, enabled: true } };
+      insertLayer(layer, '調整レイヤーを追加');
+      setEditImage(false); setTarget('mask'); setTab('adjust');
+    },
+    editAdjust: () => { setEditImage(false); setTab('adjust'); },
     rasterize: () => {
       const d = historyRef.current?.present;
       const layer = d?.layers.find(l => l.id === d.selected);
@@ -751,7 +833,10 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
             <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} title={label} onClick={() => setTab(id)}><Icon size={15} aria-hidden="true"/><span>{label}</span></button>)}
         </div>
         <div className="inspector-body">
-          {tab === 'adjust' && <AdjustPanel adjust={doc.adjust} accelerated={adjuster.accelerated} onChange={setAdjust} onCommit={endGesture} onAuto={auto} onReset={() => setAdjust(NEUTRAL, '調整をリセット')}/>}
+          {tab === 'adjust' && adjustTarget && <AdjustPanel layerName={adjustLayer?.name ?? null} basic={adjustTarget.basic} color={adjustTarget.color} accelerated={adjuster.accelerated} histogram={curveHistogram}
+            cubes={cubes} presetSource={work.current} version={version} userPresets={userPresets}
+            onBasic={setBasic} onColor={setColor} onState={setAdjustState} onCommit={endGesture} onAuto={auto} onReset={() => setAdjustState({ basic: NEUTRAL, color: NEUTRAL_COLOR }, '調整をリセット')}
+            onImportLut={() => void importLut()} onRemoveLut={deleteLut} onSavePreset={savePreset} onDeletePreset={deletePreset} onEditImage={adjustLayer ? () => setEditImage(true) : undefined}/>}
           {tab === 'layers' && <LayersPanel doc={doc} store={store} cache={cache} selected={selected} target={target} onTarget={setTarget} actions={layerActions} editText={editText}/>}
           {tab === 'history' && <HistoryPanel history={history} onJump={index => apply(jump(history, index))}/>}
           {tab === 'info' && <InfoPanel project={project} output={output} source={version ? adjuster.canvas : work.current} version={version}/>}
