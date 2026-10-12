@@ -311,6 +311,75 @@ try {
     writeFileSync(`${out}/batch-${name}`, data);
     assert.deepEqual([view.getUint32(16), view.getUint32(20)], [400, 400], `${name} is cropped to 1:1 and resized to 400 px`);
   }
+  // On-device AI on a small scene: sky above a fence and grass, with a red ball in front.
+  const scene = await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 400; c.height = 300;
+    const x = c.getContext('2d');
+    const sky = x.createLinearGradient(0, 0, 0, 180); sky.addColorStop(0, '#6e9ee6'); sky.addColorStop(1, '#8ab4e8');
+    x.fillStyle = sky; x.fillRect(0, 0, 400, 180);
+    let seed = 1; const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let y = 180; y < 300; y += 2) for (let i = 0; i < 400; i += 2) { x.fillStyle = `rgb(${60 + rand() * 50},${120 + rand() * 50},${40 + rand() * 30})`; x.fillRect(i, y, 2, 2); }
+    x.fillStyle = '#5a3c28'; for (let i = 0; i < 400; i += 37) x.fillRect(i, 150, 8, 35);
+    x.fillStyle = '#dc1e1e'; x.beginPath(); x.ellipse(205, 180, 35, 40, 0, 0, 7); x.fill();
+    return c.toDataURL('image/png').split(',')[1];
+  });
+  const sceneChooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '画像を開く' }).first().click();
+  await (await sceneChooser).setFiles([{ name: 'scene.png', mimeType: 'image/png', buffer: Buffer.from(scene, 'base64') }]);
+  await page.getByRole('button', { name: 'scene.pngを開く' }).click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(400);
+  const aiIdle = () => page.locator('.ai-busy').waitFor({ state: 'detached', timeout: 180000 });
+  await page.getByRole('tab', { name: 'AI' }).click();
+  await page.getByRole('button', { name: /被写体を選択/ }).click();
+  await aiIdle();
+  const [subjectW, subjectH] = await selectionSize();
+  assert.ok(subjectW > 55 && subjectW < 110 && subjectH > 60 && subjectH < 120, `the ball is selected as the subject: ${subjectW} × ${subjectH}`);
+  await page.screenshot({ path: `${out}/editor-ai-dark.png` });
+  await page.getByRole('button', { name: /空を選択/ }).click();
+  await page.waitForTimeout(300);
+  const [skyW, skyH] = await selectionSize();
+  assert.ok(skyW === 400 && skyH > 140 && skyH < 200, `the sky is selected: ${skyW} × ${skyH}`);
+  // Remove the ball: select it, then fill the selection from its surroundings.
+  await page.getByRole('button', { name: /被写体を選択/ }).click();
+  await aiIdle();
+  assert.ok(isRed(await pixel(cx + 5, cy + 30)), 'the ball is red before removal');
+  await page.keyboard.press('Shift+Delete');
+  await page.locator('.ai-busy').waitFor({ timeout: 5000 }).catch(() => {});
+  await aiIdle();
+  await page.keyboard.press('Control+d');
+  await page.waitForTimeout(300);
+  const filled = await pixel(cx + 5, cy + 30);
+  assert.ok(!isRed(filled) && filled[1] > filled[0], `the ball is replaced by grass: ${filled}`);
+  await page.screenshot({ path: `${out}/editor-ai-removed-dark.png` });
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  assert.ok(isRed(await pixel(cx + 5, cy + 30)), 'object removal is one undo step');
+  // The removal brush: paint over a fence post.
+  await page.keyboard.press('r');
+  await drag([cx - 125, cy - 30], [cx - 125, cy + 5], 6);
+  await page.locator('.ai-busy').waitFor({ timeout: 5000 }).catch(() => {});
+  await aiIdle();
+  await page.getByRole('tab', { name: '履歴' }).click();
+  await page.getByText('不要物を消去').waitFor();
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('h');
+  await page.getByRole('tab', { name: 'AI' }).click();
+  // Background removal masks the layer instead of deleting pixels.
+  await page.getByRole('button', { name: /背景を削除/ }).click();
+  await aiIdle();
+  await page.waitForTimeout(300);
+  const masked = await pixel(cx - 150, cy - 100);
+  assert.ok(masked[3] === 0 || (masked[0] > 150 && masked[1] > 150 && masked[2] > 150) || (masked[0] < 80 && masked[1] < 80 && masked[2] < 80), `the sky is hidden after background removal: ${masked}`);
+  assert.ok(isRed(await pixel(cx + 5, cy + 30)), 'the subject stays visible');
+  await page.keyboard.press('Control+z');
+  // Upscaling makes a new image and leaves the original alone.
+  await page.getByRole('tab', { name: 'AI' }).click();
+  await page.getByRole('button', { name: '2倍' }).click();
+  await page.locator('.doc-title', { hasText: 'scene ×2.png' }).waitFor({ timeout: 300000 });
+  assert.match(await page.locator('.doc-title').innerText(), /800 × 600/);
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await page.waitForTimeout(300);
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();
   await page.locator('.project').first().waitFor();

@@ -87,7 +87,7 @@ export default function App() {
 
   return <>
     {open
-      ? <Editor key={open.id} project={open} prefs={prefs} onClose={() => setOpenId(null)} onUpdate={update} onToast={setToast} onSettings={() => setSettings(true)}/>
+      ? <Editor key={open.id} project={open} prefs={prefs} onClose={() => setOpenId(null)} onUpdate={update} onToast={setToast} onSettings={() => setSettings(true)} onAddImage={file => void importFiles([file], true)}/>
       : <Library projects={projects} prefs={prefs} busy={busy} onPrefs={setPrefs} onImport={importFiles} onOpen={project => { update({ ...project, opened: Date.now() }); setOpenId(project.id); }} onUpdate={update} onRemove={remove} onSettings={() => setSettings(true)} onExport={project => void exportProject(project)} onToast={setToast}/>}
     {settings && <Settings prefs={prefs} onChange={setPrefs} onClose={() => setSettings(false)}/>}
     {toast && <div className="toast" role="status">{toast}</div>}

@@ -11,6 +11,8 @@ concurrency:
 jobs:
   macos:
     runs-on: macos-latest
+    env:
+      HAS_SIGNING: ${{ secrets.MAC_CSC_LINK != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,9 +20,21 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run package:mac:dmg
+      # Signed and notarised when the signing secrets are set; otherwise an unsigned build.
+      - name: Enable signing
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));delete p.build.mac.identity;p.build.mac.hardenedRuntime=true;p.build.mac.notarize=true;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+      - name: Build
         env:
-          GH_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          npm run build
+          if [ -n "$CSC_LINK" ]; then npx electron-builder --mac --publish never; else CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --publish never; fi
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -37,7 +51,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # electron-builder signs when WIN_CSC_LINK is set.
       - run: npm run package:win
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -61,8 +79,11 @@ jobs:
           FILES=()
           while IFS= read -r file; do FILES+=("$file"); done < <(find dist-apps -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \))
           if [ "${#FILES[@]}" -eq 0 ]; then echo "No app artifacts"; exit 1; fi
+          sha256sum "${FILES[@]}" | sed 's#  .*/#  #' > SHA256SUMS.txt
+          FILES+=("SHA256SUMS.txt")
+          NOTES=$'端末の中だけで完結する画像エディタ Imagee のデスクトップ版です。\n\n- Windows: `Imagee-win-setup.exe`\n- macOS（Apple シリコン）: `Imagee-mac-arm64.dmg`\n- macOS（Intel）: `Imagee-mac-x64.dmg`\n\nブラウザ版: https://tomo0108.github.io/Imagee/app/'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${FILES[@]}" --clobber
           else
-            gh release create "$TAG" "${FILES[@]}" --title "Imagee $VERSION" --generate-notes
+            gh release create "$TAG" "${FILES[@]}" --title "Imagee $VERSION" --notes "$NOTES" --generate-notes
           fi

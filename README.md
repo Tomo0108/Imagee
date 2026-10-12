@@ -20,9 +20,15 @@ Videe / Melodee と同じ技術構成（React + TypeScript + Vite、Electron、P
 - 自動保存: 編集内容と描いたピクセルはライブラリに保存され、開き直すと続きから編集できます
 - 書き出し: PNG / JPEG / WebP / AVIF、画質とサイズの指定、実際のファイルサイズの事前表示、メタデータなし
 - プロジェクト: PSD の読み込み・書き出し（レイヤー、マスク、描画モード）、すべてを編集可能なまま保存できる `.imagee` 形式（中身はふつうの zip）
+- AI（すべて端末内・オフライン）: 被写体を選択、空を選択、背景を削除（マスクとして付くので後から修正可能）、不要物を消す（なぞる・選択範囲）、くっきり拡大（2 倍・4 倍、新しい画像として追加）
 - 一括処理: 複数の画像に色調・縦横比・サイズ・透かし・形式・ファイル名をまとめて適用し、zip で保存。設定はレシピとして保存して再利用できます
 
-今後の予定は [docs/roadmap.md](docs/roadmap.md) を参照してください。
+## 使う
+
+- ブラウザ版: https://tomo0108.github.io/Imagee/app/ （紹介ページ: https://tomo0108.github.io/Imagee/ ）
+- デスクトップ版: [リリース一覧](https://github.com/Tomo0108/Imagee/releases/latest) から Windows（`Imagee-win-setup.exe`）、macOS（`Imagee-mac-arm64.dmg` / `Imagee-mac-x64.dmg`）をダウンロード
+
+開発の経緯は [docs/roadmap.md](docs/roadmap.md)、使用しているライブラリと AI モデルは [docs/third-party.md](docs/third-party.md) を参照してください。
 
 ## 主なショートカット
 
@@ -33,9 +39,10 @@ Videe / Melodee と同じ技術構成（React + TypeScript + Vite、Electron、P
 | L / W | なげなわ / 自動選択 | I | スポイト |
 | T / U | テキスト / 図形 | [ / ] | ブラシサイズ |
 | C / H / Z | 切り抜き / 手のひら / ズーム | X / D | 色の入れ替え / 初期化 |
-| J / S | 修復ブラシ / コピースタンプ | Alt+クリック | コピー元の指定（スタンプ） |
+| J / R / S | 修復ブラシ / 不要物を消す / コピースタンプ | Alt+クリック | コピー元の指定（スタンプ） |
 | Ctrl+A / D / ⇧I | すべて選択 / 解除 / 反転 | Ctrl+J | 複製（選択範囲があればその部分） |
 | Alt+Delete / Ctrl+Delete | 描画色 / 背景色で塗りつぶし | Delete | 選択範囲を消去 |
+| ⇧+Delete | 選択範囲を消して周りで埋める | | |
 
 macOS では Ctrl の代わりに ⌘ を使います。
 
@@ -59,7 +66,7 @@ npm run package:win
 
 macOS と Windows の配布物は `release/` に出力されます。`v*` タグを push すると GitHub Actions がビルドしてリリースを作成します。
 
-Vercel ではリポジトリをそのままインポートすると Web 版（PWA）が公開されます。
+`main` に push すると、紹介ページ（`site/`）と Web 版（`/app/`）が GitHub Pages に公開されます。手元で組み立てるには `npm run site`（`site-dist/` に出力）を使います。
 
 ## テスト
 

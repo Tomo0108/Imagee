@@ -6,3 +6,4 @@ release/
 .vercel
 .env*.local
 screenshots/
+site-dist/

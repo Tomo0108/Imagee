@@ -1,4 +1,4 @@
-const CACHE = 'imagee-shell-v1';
+const CACHE = 'imagee-shell-v2';
 const PRECACHE = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

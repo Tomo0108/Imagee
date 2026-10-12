@@ -6,5 +6,7 @@
    - 次のフェーズに回したもの: 端末にインストール済みのフォントの利用（Local Font Access）、選択範囲のぼかし・境界調整
 4. **高度な機能**（完了）: 調整レイヤー、カーブ/レベル/HSL、LUT とプリセット、修復ブラシ・コピースタンプ、PSD 読み込み/書き出し、レシピによる一括処理、`.imagee` プロジェクト形式、選択範囲のぼかし・拡張・縮小、端末のフォントの利用
    - 制限: PSD のテキスト・図形・調整レイヤーは画像として読み書きします（グループは展開）
-5. **端末内 AI**: 背景削除、被写体/空の選択、不要物除去、超解像（すべてオフラインで実行）
-6. **配布**: 配布サイト、署名付き macOS / Windows リリース、PWA 公開
+5. **端末内 AI**（完了）: 背景削除、被写体/空の選択、不要物除去、超解像（すべてオフラインで実行。WebGPU があれば GPU、なければ CPU）
+6. **配布**（完了）: 配布サイトと PWA（GitHub Pages、`/app/`）、macOS / Windows のリリース自動化（タグ `v*` で GitHub Releases に公開）
+   - 署名: ワークフローは署名用のシークレットがあれば署名・公証し、なければ未署名で公開します。必要なシークレットは `MAC_CSC_LINK`・`MAC_CSC_KEY_PASSWORD`・`APPLE_ID`・`APPLE_APP_SPECIFIC_PASSWORD`・`APPLE_TEAM_ID`（macOS）、`WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`（Windows）です
+   - アイコン: Codex がデザイン中（`public/icons/README.md`）

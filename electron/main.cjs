@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
-const { basename, extname, isAbsolute, join } = require('node:path');
+const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron');
+const { basename, extname, isAbsolute, join, normalize, sep } = require('node:path');
+const { pathToFileURL } = require('node:url');
 const fs = require('node:fs/promises');
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'gif', 'bmp'];
@@ -10,6 +11,27 @@ const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'i
 const MAX_BYTES = 512 * 1024 * 1024;
 let win;
 let pendingPaths = [];
+
+// The app is served from app://imagee/ rather than file://, so module workers, WebAssembly and the AI models
+// load the same way as on the web. Cross-origin isolation lets the AI use several CPU threads.
+const DIST = join(__dirname, '../dist');
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, codeCache: true } }]);
+function serveApp() {
+  protocol.handle('app', async request => {
+    const { host, pathname } = new URL(request.url);
+    const file = normalize(join(DIST, decodeURIComponent(pathname === '/' ? '/index.html' : pathname)));
+    if (host !== 'imagee' || (file !== DIST && !file.startsWith(DIST + sep))) return new Response('Not found', { status: 404 });
+    const response = await net.fetch(pathToFileURL(file).toString()).catch(() => null);
+    if (!response || !response.ok) return new Response('Not found', { status: 404 });
+    const headers = new Headers(response.headers);
+    headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+    headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+    headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+    if (file.endsWith('.wasm')) headers.set('Content-Type', 'application/wasm');
+    if (file.endsWith('.mjs') || file.endsWith('.js')) headers.set('Content-Type', 'text/javascript');
+    return new Response(response.body, { status: 200, headers });
+  });
+}
 
 if (!app.isPackaged && process.env.IMAGEE_TEST_USER_DATA) app.setPath('userData', process.env.IMAGEE_TEST_USER_DATA);
 
@@ -48,7 +70,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   if (process.argv.includes('--dev')) win.loadURL('http://127.0.0.1:5173');
-  else win.loadFile(join(__dirname, '../dist/index.html'));
+  else win.loadURL('app://imagee/index.html');
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -57,6 +79,7 @@ app.on('open-file', (event, file) => { event.preventDefault(); openPaths([file])
 openPaths(process.argv.slice(1));
 
 app.whenReady().then(() => {
+  serveApp();
   createWindow();
   register('pick-images', async projects => {
     const filters = projects ? [{ name: '画像・PSD・Imagee プロジェクト', extensions: OPEN_EXTENSIONS }] : [{ name: 'Images', extensions: IMAGE_EXTENSIONS }];

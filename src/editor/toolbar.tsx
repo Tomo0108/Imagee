@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Bandage, Blend, Brush, Circle, Crop, Eraser, Hand, Lasso, Move, PaintBucket, Pipette, Shapes, SquareDashed, Stamp, Type, WandSparkles, ZoomIn, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, Bandage, Blend, Brush, Circle, Crop, Eraser, Hand, Lasso, Move, PaintBucket, Pipette, Shapes, SquareDashed, Stamp, Type, WandSparkles, ZoomIn, type LucideIcon, BrushCleaning } from 'lucide-react';
 import type { BrushOptions } from './tools';
 import type { Refine, SelectMode } from './selection';
 import { useState } from 'react';
@@ -42,6 +42,7 @@ export const TOOLS: { id: Tool; label: string; key: string; icon: LucideIcon; ga
   { id: 'brush', label: 'ブラシ', key: 'B', icon: Brush, gap: true },
   { id: 'eraser', label: '消しゴム', key: 'E', icon: Eraser },
   { id: 'heal', label: 'スポット修復ブラシ', key: 'J', icon: Bandage },
+  { id: 'remove', label: '不要物を消す（AI）', key: 'R', icon: BrushCleaning },
   { id: 'clone', label: 'コピースタンプ（Alt+クリックでコピー元）', key: 'S', icon: Stamp },
   { id: 'fill', label: '塗りつぶし', key: 'G', icon: PaintBucket },
   { id: 'gradient', label: 'グラデーション', key: '⇧+G', icon: Blend },
@@ -76,18 +77,19 @@ const HINTS: Partial<Record<Tool, string>> = {
 export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectionCommand, onRefine }: { tool: Tool; settings: ToolSettings; onChange: (patch: Partial<ToolSettings>) => void; hasSelection: boolean; onSelectionCommand: (command: 'all' | 'none' | 'invert') => void; onRefine: (op: Refine, radius: number) => void }) {
   const [radius, setRadius] = useState(8);
   if (tool === 'crop') return null;
-  const brushKey = tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush';
+  const brushKey = tool === 'remove' ? 'heal' : tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush';
   const brush = settings[brushKey];
   const setBrush = (patch: Partial<BrushOptions>) => onChange({ [brushKey]: { ...brush, ...patch } });
   let body: React.ReactNode = HINTS[tool] && <span className="options-hint">{HINTS[tool]}</span>;
-  if (tool === 'brush' || tool === 'eraser' || tool === 'heal' || tool === 'clone') body = <>
+  if (tool === 'brush' || tool === 'eraser' || tool === 'heal' || tool === 'remove' || tool === 'clone') body = <>
     <div className="opt-slider"><Slider label="サイズ" value={brush.size} min={1} max={500} unit="px" onChange={size => setBrush({ size })}/></div>
     <div className="opt-slider"><Slider label="硬さ" value={brush.hardness} min={0} max={100} unit="%" onChange={hardness => setBrush({ hardness })}/></div>
-    {tool !== 'heal' && <div className="opt-slider"><Slider label="不透明度" value={brush.opacity} min={1} max={100} unit="%" onChange={opacity => setBrush({ opacity })}/></div>}
+    {tool !== 'heal' && tool !== 'remove' && <div className="opt-slider"><Slider label="不透明度" value={brush.opacity} min={1} max={100} unit="%" onChange={opacity => setBrush({ opacity })}/></div>}
     {(tool === 'brush' || tool === 'eraser') && <label className="opt-toggle" title="ペンの筆圧でサイズを変える"><span>筆圧</span><Toggle label="筆圧でサイズを変える" checked={brush.pressureSize} onChange={pressureSize => setBrush({ pressureSize })}/></label>}
     {tool === 'clone' && <label className="opt-toggle" title="オフにすると選択中のレイヤーだけからコピー"><span>全レイヤーから</span><Toggle label="全レイヤーからコピー" checked={settings.cloneAll} onChange={cloneAll => onChange({ cloneAll })}/></label>}
     {tool === 'clone' && <span className="options-hint">Alt+クリックでコピー元を指定</span>}
     {tool === 'heal' && <span className="options-hint">消したい部分をなぞると、周りから自然に補います</span>}
+    {tool === 'remove' && <span className="options-hint">消したいものを覆うようになぞると、周りの景色で埋めます</span>}
   </>;
   else if (tool === 'marquee' || tool === 'ellipse' || tool === 'lasso' || tool === 'wand') body = <>
     <Segmented label="選択の方法" value={settings.selectMode} onChange={selectMode => onChange({ selectMode })} options={[

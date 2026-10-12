@@ -1,8 +1,8 @@
 {
   "name": "imagee",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Imagee",
+  "description": "Imagee — 端末の中だけで完結する画像エディタ",
   "author": "Imagee",
   "license": "UNLICENSED",
   "type": "module",
@@ -14,10 +14,11 @@
     "desktop": "npm run build && electron .",
     "desktop:dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron . --dev\"",
     "package:mac": "npm run build && electron-builder --mac --dir --publish never",
-    "package:mac:dmg": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --publish never",
+    "package:mac:dmg": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
     "package:win": "npm run build && electron-builder --win nsis --publish never",
     "test": "node --test tests/*.test.mjs",
-    "test:ui": "node scripts/verify-ui.mjs"
+    "test:ui": "node scripts/verify-ui.mjs",
+    "site": "npm run build && node scripts/build-site.mjs"
   },
   "build": {
     "appId": "app.imagee.editor",
@@ -68,21 +69,33 @@
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
-      "artifactName": "Imagee-${version}-mac-${arch}.${ext}"
+      "artifactName": "Imagee-mac-${arch}.${ext}"
     },
     "win": {
       "target": [
         "nsis"
       ],
-      "artifactName": "Imagee-${version}-win-${arch}.${ext}"
+      "artifactName": "Imagee-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Imagee-${version}-win-setup.exe"
+      "artifactName": "Imagee-win-setup.${ext}"
     }
   },
   "dependencies": {
@@ -91,6 +104,7 @@
     "ag-psd": "^31.0.3",
     "fflate": "^0.8.3",
     "lucide-react": "^1.55.0",
+    "onnxruntime-web": "^1.30.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

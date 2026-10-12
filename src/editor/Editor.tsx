@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ArrowLeft, Check, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
+import { Sparkles, ArrowLeft, Check, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
 import type { Project } from '../store';
 import { writePixels } from '../store';
 import { decode, histogram, thumbnail, toBlob, canvas as makeCanvas } from '../imaging';
@@ -11,7 +11,7 @@ import { ASPECTS, autoCrop, fitAspect, flip, IDENTITY, MAX_ANGLE, orientedSize, 
 import { floodMask } from '../lib/flood.mjs';
 import { effectivePressure } from '../lib/brush.mjs';
 import { compositeInto, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer, type AdjustLayer } from './document';
-import { PixelStore, union, type Box } from './pixels';
+import { clip, PixelStore, union, type Box } from './pixels';
 import { arrayMask, combine, invertSelection, refineSelection, selectAll, shapeMask, type Refine, type SelectMode, type Selection } from './selection';
 import { bucketFill, editSurface, gradientFill, healSurface, HealMask, hexToRgb, rgbToHex, Stroke, type CloneSource } from './tools';
 import { Adjuster } from './gl';
@@ -25,12 +25,14 @@ import { NEUTRAL_COLOR, parseCube, type ColorOps } from '../lib/color.mjs';
 import { addLut, readLuts, removeLut } from '../store';
 import { loadUserPresets, storeUserPresets, type UserPreset } from './color-ui';
 import type { Histogram } from '../imaging';
-import { exportName, isImageFile } from '../lib/files.mjs';
+import { baseName, exportName, isImageFile } from '../lib/files.mjs';
+import { AiPanel, type AiBusy } from './AiPanel';
+import { cancelAi, removeArea, skyMaskCanvas, subjectMask, upscale } from '../ai/ai';
 import { IconButton, Slider, mod } from '../ui';
 
-type Tab = 'adjust' | 'layers' | 'history' | 'info';
+type Tab = 'adjust' | 'layers' | 'ai' | 'history' | 'info';
 type Point = { x: number; y: number };
-interface Props { project: Project; prefs: Preferences; onClose: () => void; onUpdate: (project: Project) => void; onToast: (message: string) => void; onSettings: () => void }
+interface Props { project: Project; prefs: Preferences; onClose: () => void; onUpdate: (project: Project) => void; onToast: (message: string) => void; onSettings: () => void; onAddImage: (file: File) => void }
 /** A pointer action in progress on the canvas. */
 type Action =
   | { kind: 'stroke'; stroke: Stroke; layerId: string; mask: boolean; label: string }
@@ -39,7 +41,7 @@ type Action =
   | { kind: 'gradient'; start: Point; end: Point }
   | { kind: 'shape'; start: Point; end: Point; constrain: boolean }
   | { kind: 'move'; id: string; start: Point; origin: Point }
-  | { kind: 'heal'; mask: HealMask; key: string; layerId: string };
+  | { kind: 'heal'; mask: HealMask; key: string; layerId: string; remove: boolean };
 /** Where painting lands: a raster layer or a layer mask, with its position in the document. */
 interface Surface { key: string; layer: Layer; mask: boolean; offset: Point }
 
@@ -53,11 +55,11 @@ const snapLine = (a: Point, b: Point): Point => {
   const angle = Math.round(Math.atan2(b.y - a.y, b.x - a.x) / (Math.PI / 4)) * (Math.PI / 4), length = Math.hypot(b.x - a.x, b.y - a.y);
   return { x: a.x + Math.cos(angle) * length, y: a.y + Math.sin(angle) * length };
 };
-const BRUSHES: Tool[] = ['brush', 'eraser', 'heal', 'clone'];
+const BRUSHES: Tool[] = ['brush', 'eraser', 'heal', 'remove', 'clone'];
 const luminance = (hex: string) => { const [r, g, b] = hexToRgb(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const clearColor = (hex: string) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},0)`; };
 
-export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings }: Props) {
+export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings, onAddImage }: Props) {
   const [history, setHistory] = useState<History<Doc> | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
@@ -81,6 +83,10 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   const [userPresets, setUserPresets] = useState<UserPreset[]>(loadUserPresets);
   const [curveHistogram, setCurveHistogram] = useState<Histogram | null>(null);
   const [editText, setEditText] = useState(false);
+  const [aiBusy, setAiBusy] = useState<AiBusy | null>(null);
+  const aiBusyRef = useRef(false);
+  /** The area being filled by object removal, shown until the result arrives. */
+  const removing = useRef<{ canvas: HTMLCanvasElement; offset: Point } | null>(null);
   const adjuster = useMemo(() => new Adjuster(), []);
   const store = useMemo(() => new PixelStore(), []);
   const cache = useMemo(() => new LayerCache(), []);
@@ -277,6 +283,35 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     return { key: created.id, layer: created, mask: false, offset: { x: 0, y: 0 } };
   }, [target, newRaster, insertLayer, onToast]);
 
+  // On-device AI: one task at a time, with progress and cancel in the AI panel.
+  const runAi = useCallback(async (label: string, task: (progress: (fraction: number) => void) => Promise<void>, withProgress = false) => {
+    aiBusyRef.current = true;
+    setAiBusy({ label, progress: withProgress ? 0 : null });
+    try { await task(fraction => setAiBusy({ label, progress: fraction })); }
+    catch (e) { if ((e as DOMException).name !== 'AbortError') onToast((e as Error).message || 'AI の処理に失敗しました。'); }
+    finally { aiBusyRef.current = false; setAiBusy(null); removing.current = null; bumpOverlay(); }
+  }, [onToast]);
+  /** Object removal: fills the masked area of a surface (surface coordinates) with surrounding texture, as one undo step. */
+  const fillArea = useCallback((key: string, layerId: string, mask: HTMLCanvasElement, bounds: Box, label: string) => {
+    const surface = store.get(key);
+    if (!surface) return;
+    const margin = Math.max(24, Math.round(Math.max(bounds.w, bounds.h) * 1.3));
+    const area = clip({ x: bounds.x - margin, y: bounds.y - margin, w: bounds.w + margin * 2, h: bounds.h + margin * 2 }, surface);
+    if (!area) return;
+    const image = store.context(key).getImageData(area.x, area.y, area.w, area.h);
+    const alpha = mask.getContext('2d')!.getImageData(area.x, area.y, area.w, area.h).data;
+    const weights = new Float32Array(area.w * area.h);
+    for (let i = 0; i < weights.length; i++) weights[i] = alpha[i * 4 + 3] / 255;
+    const rev = store.rev(key);
+    removing.current = { canvas: mask, offset: historyRef.current?.present.layers.find(l => l.id === layerId) ?? { x: 0, y: 0 } };
+    void runAi('不要物を消しています…', async progress => {
+      const result = await removeArea(image, weights, progress);
+      if (store.rev(key) !== rev) throw new Error('処理中に画像が変更されたため、消去を取り消しました。');
+      const next = editSurface(store, key, area, c => c.putImageData(new ImageData(result as Uint8ClampedArray<ArrayBuffer>, area.w, area.h), area.x, area.y));
+      if (next !== null) commitSurface(layerId, false, next, label, false);
+    }, true);
+  }, [store, runAi, commitSurface]);
+
   const sample = useCallback((p: Point) => {
     const d = historyRef.current?.present, source = work.current;
     if (!d || !source) return null;
@@ -337,14 +372,15 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         refresh(stroke.add({ x: p.x, y: p.y, pressure: 1 }));
         break;
       }
-      case 'heal': {
-        const surface = surfaceFor(false, 'テキストや図形のレイヤーは、ラスタライズすると修復できます。');
+      case 'heal': case 'remove': {
+        if (tool === 'remove' && aiBusyRef.current) { onToast('前の処理が終わるまでお待ちください。'); break; }
+        const surface = surfaceFor(false, `テキストや図形のレイヤーは、ラスタライズすると${tool === 'remove' ? '消去' : '修復'}できます。`);
         if (!surface) break;
-        if (surface.mask) { onToast('マスクには修復ブラシを使えません。'); break; }
+        if (surface.mask) { onToast(tool === 'remove' ? 'マスクでは不要物を消せません。画像のレイヤーを選んでください。' : 'マスクには修復ブラシを使えません。'); break; }
         const target = store.get(surface.key)!;
         const mask = new HealMask(target.width, target.height, settings.heal.size, settings.heal.hardness, surface.offset);
         mask.add({ x: p.x, y: p.y, pressure: 1 });
-        action.current = { kind: 'heal', mask, key: surface.key, layerId: surface.layer.id };
+        action.current = { kind: 'heal', mask, key: surface.key, layerId: surface.layer.id, remove: tool === 'remove' };
         break;
       }
       case 'fill': {
@@ -447,12 +483,14 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         shape: { type: settings.shape, w: Math.round(line ? end.x - start.x : area.w), h: Math.round(line ? end.y - start.y : area.h), fill, stroke: line ? colors[0] : settings.shapeStroke ? (fill ? colors[1] : colors[0]) : null, strokeWidth: settings.strokeWidth, radius: settings.radius },
       };
       insertLayer(shape, '図形を追加');
+    } else if (a.kind === 'heal' && a.remove) {
+      if (a.mask.bounds) fillArea(a.key, a.layerId, a.mask.canvas, a.mask.bounds, '不要物を消去');
     } else if (a.kind === 'heal') {
       const rev = healSurface(store, a.key, a.mask);
       if (rev !== null) commitSurface(a.layerId, false, rev, 'スポット修復', false);
     } else if (a.kind === 'move') endGesture();
     bumpOverlay();
-  }, [store, cache, adjuster, settings, colors, surfaceFor, commitSurface, insertLayer, setSelection, endGesture]);
+  }, [store, cache, adjuster, settings, colors, surfaceFor, commitSurface, insertLayer, setSelection, endGesture, fillArea]);
 
   const onTool = useCallback((phase: ToolPhase, p: ToolPointer | null) => {
     const d = historyRef.current?.present;
@@ -496,6 +534,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     }
     const h = hover.current;
     if (a?.kind === 'heal') { c.save(); c.globalAlpha = 0.5; c.drawImage(a.mask.canvas, a.mask.offset.x, a.mask.offset.y); c.restore(); }
+    const pending = removing.current;
+    if (pending) { c.save(); c.globalAlpha = 0.4; c.drawImage(pending.canvas, pending.offset.x, pending.offset.y); c.restore(); }
     const src = cloneSource.current;
     if (tool === 'clone' && src) {
       // Where the clone stamp copies from: the picked point, or the hover point plus the aligned offset.
@@ -504,8 +544,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       c.save(); c.lineWidth = px; c.strokeStyle = '#fff'; c.setLineDash([3 * px, 3 * px]);
       c.beginPath(); c.arc(at.x, at.y, r, 0, Math.PI * 2); c.moveTo(at.x - 6 * px, at.y); c.lineTo(at.x + 6 * px, at.y); c.moveTo(at.x, at.y - 6 * px); c.lineTo(at.x, at.y + 6 * px); c.stroke(); c.restore();
     }
-    if (h && (tool === 'brush' || tool === 'eraser' || tool === 'heal' || tool === 'clone')) {
-      const options = settings[tool];
+    if (h && (tool === 'brush' || tool === 'eraser' || tool === 'heal' || tool === 'remove' || tool === 'clone')) {
+      const options = settings[tool === 'remove' ? 'heal' : tool];
       const radius = Math.max(options.size / 2, 2 * px);
       c.save(); c.beginPath(); c.arc(h.x, h.y, radius, 0, Math.PI * 2);
       c.lineWidth = 3 * px; c.strokeStyle = 'rgba(0,0,0,.55)'; c.stroke();
@@ -674,6 +714,72 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     } catch (e) { onToast((e as Error).message); }
   }, [insertLayer, newRaster, onToast]);
 
+  const aiSubject = useCallback(() => {
+    const d = historyRef.current?.present, source = work.current;
+    if (!d || !source) return;
+    void runAi('被写体を探しています…', async () => {
+      const next = combine(null, await subjectMask(source, d.width, d.height), 'new');
+      if (!next) throw new Error('被写体が見つかりませんでした。');
+      setSelection(next);
+    });
+  }, [runAi, setSelection]);
+  const aiSky = useCallback(() => {
+    const d = historyRef.current?.present, source = work.current;
+    if (!d || !source) return;
+    const mask = skyMaskCanvas(source, d.width, d.height);
+    const next = mask && combine(null, mask, 'new');
+    if (!next) { onToast('空が見つかりませんでした。'); return; }
+    setSelection(next);
+    bumpOverlay();
+  }, [setSelection, onToast]);
+  const aiRemoveBackground = useCallback(() => {
+    const d = historyRef.current?.present;
+    const layer = d?.layers.find(l => l.id === d.selected);
+    const source = layer && cache.source(layer, store);
+    if (!d || !layer || !source) return;
+    const full = makeCanvas(d.width, d.height);
+    full.getContext('2d')!.drawImage(source.canvas, source.x, source.y);
+    void runAi('背景を見分けています…', async () => {
+      const matte = await subjectMask(full, d.width, d.height);
+      const key = maskKey(layer.id);
+      if (layer.mask && store.has(key)) {
+        // Keep the existing mask and hide the background on top of it, as one undoable change.
+        const rev = editSurface(store, key, { x: 0, y: 0, w: d.width, h: d.height }, c => { c.globalCompositeOperation = 'destination-in'; c.drawImage(matte, 0, 0); });
+        if (rev !== null) updateLayer(layer.id, { mask: { rev, enabled: true } }, '背景を削除');
+      } else updateLayer(layer.id, { mask: { rev: store.create(key, d.width, d.height, matte), enabled: true } }, '背景を削除');
+      setTarget('mask');
+      onToast('背景を隠すマスクを付けました。白のブラシで表示、黒のブラシで非表示に直せます。');
+    });
+  }, [cache, store, runAi, updateLayer, onToast]);
+  const aiFillSelection = useCallback(() => {
+    const sel = selectionRef.current;
+    if (!sel) { onToast('消したい範囲を選択してください。'); return; }
+    if (aiBusyRef.current) { onToast('前の処理が終わるまでお待ちください。'); return; }
+    const surface = surfaceFor(false, 'テキストや図形のレイヤーは、ラスタライズすると消去できます。');
+    if (!surface) return;
+    if (surface.mask) { onToast('マスクでは不要物を消せません。画像のレイヤーを選んでください。'); return; }
+    const target = store.get(surface.key)!;
+    const mask = makeCanvas(target.width, target.height);
+    mask.getContext('2d')!.drawImage(sel.mask, -surface.offset.x, -surface.offset.y);
+    fillArea(surface.key, surface.layer.id, mask, { x: sel.bounds.x - surface.offset.x, y: sel.bounds.y - surface.offset.y, w: sel.bounds.w, h: sel.bounds.h }, '選択範囲を消して埋める');
+  }, [store, surfaceFor, fillArea, onToast]);
+  const aiUpscale = useCallback((factor: 2 | 4) => {
+    const d = historyRef.current?.present;
+    if (!d || !version) return;
+    const image = adjuster.canvas;
+    void runAi(`${factor}倍に拡大しています…`, async progress => {
+      const out = outputSize(d.geometry, d.width, d.height);
+      const flat = makeCanvas(out.width, out.height);
+      flat.getContext('2d')!.imageSmoothingQuality = 'high';
+      drawGeometry(flat.getContext('2d')!, image, d, 0, 0, 1, 'output');
+      const big = await upscale(flat, factor, progress);
+      const blob = await toBlob(big, 'image/png');
+      big.width = big.height = flat.width = flat.height = 0;
+      onToast(`${factor}倍に拡大した画像を新しく追加しました。元の画像はそのまま残っています。`);
+      onAddImage(new File([blob], `${baseName(project.name)} ×${factor}.png`, { type: 'image/png', lastModified: Date.now() }));
+    }, true);
+  }, [adjuster, version, runAi, onToast, onAddImage, project.name]);
+
   const layerActions: LayerActions = useMemo(() => ({
     select: selectLayer,
     update: updateLayer,
@@ -787,6 +893,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       else if (command && key === 'backspace') { event.preventDefault(); fillSelection(colors[1], '背景色で塗りつぶし'); }
       else if (command) return;
       else if (event.altKey && key === 'backspace') { event.preventDefault(); fillSelection(colors[0], '描画色で塗りつぶし'); }
+      else if (event.shiftKey && (key === 'delete' || key === 'backspace')) { event.preventDefault(); aiFillSelection(); }
       else if (key === 'delete' || key === 'backspace') { event.preventDefault(); if (selectionRef.current) fillSelection(null, '消去'); else onToast('消去する範囲を選択してください。'); }
       else if (key === ' ') { event.preventDefault(); setSpace(true); }
       else if (key === '\\') setBefore(true);
@@ -799,7 +906,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         updateLayer(layer.id, { x: layer.x + dx, y: layer.y + dy }, '移動', true);
       }
       else if (key === '[' || key === ']') {
-        const which = tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush', size = settings[which].size;
+        const which = tool === 'remove' ? 'heal' : tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush', size = settings[which].size;
         setSettings({ [which]: { ...settings[which], size: Math.max(1, Math.min(500, Math.round(key === ']' ? size * 1.2 + 1 : size / 1.2 - 1))) } });
         bumpOverlay();
       }
@@ -807,7 +914,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       else if (key === 'd') setColors(['#000000', '#ffffff']);
       else if (event.shiftKey && key === 'n') layerActions.add();
       else {
-        const next = ({ v: 'move', l: 'lasso', w: 'wand', b: 'brush', e: 'eraser', j: 'heal', s: 'clone', i: 'eyedropper', t: 'text', u: 'shape', h: 'hand', z: 'zoom' } as Record<string, Tool>)[key]
+        const next = ({ v: 'move', l: 'lasso', w: 'wand', b: 'brush', e: 'eraser', j: 'heal', r: 'remove', s: 'clone', i: 'eyedropper', t: 'text', u: 'shape', h: 'hand', z: 'zoom' } as Record<string, Tool>)[key]
           ?? (key === 'm' ? (tool === 'marquee' || event.shiftKey ? (tool === 'ellipse' ? 'marquee' : 'ellipse') : 'marquee') : undefined)
           ?? (key === 'g' ? (tool === 'fill' || event.shiftKey ? (tool === 'gradient' ? 'fill' : 'gradient') : 'fill') : undefined)
           ?? (key === 'c' ? (tool === 'crop' ? 'hand' : 'crop') : undefined);
@@ -817,7 +924,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const up = (event: KeyboardEvent) => { if (event.key === ' ') setSpace(false); if (event.key === '\\') setBefore(false); if (event.key === 'Shift' || event.key === 'Alt') bumpOverlay(); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast]);
+  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast, aiFillSelection]);
   if (error) return <div className="app editor"><div className="editor-error"><h2>画像を開けませんでした</h2><p>{error}</p><button type="button" className="btn" onClick={onClose}><ArrowLeft size={16}/>ライブラリに戻る</button></div></div>;
   if (!doc || !history || !output || !selected) return <div className="app editor"><div className="editor-loading"><span className="spinner" aria-hidden="true"/>読み込み中…</div></div>;
 
@@ -873,7 +980,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       </div>
       <aside className="inspector" aria-label="インスペクター">
         <div className="inspector-tabs" role="tablist">
-          {([['layers', 'レイヤー', Layers], ['adjust', '調整', SlidersHorizontal], ['history', '履歴', HistoryIcon], ['info', '情報', Info]] as const).map(([id, label, Icon]) =>
+          {([['layers', 'レイヤー', Layers], ['adjust', '調整', SlidersHorizontal], ['ai', 'AI', Sparkles], ['history', '履歴', HistoryIcon], ['info', '情報', Info]] as const).map(([id, label, Icon]) =>
             <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} title={label} onClick={() => setTab(id)}><Icon size={15} aria-hidden="true"/><span>{label}</span></button>)}
         </div>
         <div className="inspector-body">
@@ -882,6 +989,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
             onBasic={setBasic} onColor={setColor} onState={setAdjustState} onCommit={endGesture} onAuto={auto} onReset={() => setAdjustState({ basic: NEUTRAL, color: NEUTRAL_COLOR }, '調整をリセット')}
             onImportLut={() => void importLut()} onRemoveLut={deleteLut} onSavePreset={savePreset} onDeletePreset={deletePreset} onEditImage={adjustLayer ? () => setEditImage(true) : undefined}/>}
           {tab === 'layers' && <LayersPanel doc={doc} store={store} cache={cache} selected={selected} target={target} onTarget={setTarget} actions={layerActions} editText={editText}/>}
+          {tab === 'ai' && <AiPanel busy={aiBusy} hasSelection={!!selection} layerName={selected.name} canRemoveBackground={selected.kind !== 'adjust'} output={output}
+            onSubject={aiSubject} onSky={aiSky} onRemoveBackground={aiRemoveBackground} onRemoveTool={() => setTool('remove')} onFillSelection={aiFillSelection} onUpscale={aiUpscale} onCancel={cancelAi}/>}
           {tab === 'history' && <HistoryPanel history={history} onJump={index => apply(jump(history, index))}/>}
           {tab === 'info' && <InfoPanel project={project} output={output} source={version ? adjuster.canvas : work.current} version={version}/>}
         </div>
