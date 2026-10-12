@@ -53,3 +53,15 @@ test('quarter turns and flips carry the crop', () => {
   assert.deepEqual(flip(f, 'h', 400, 300), { ...g, angle: 0 });
   assert.deepEqual(clampRect({ x: -5, y: 290, w: 50, h: 50 }, { width: 400, height: 300 }), { x: 0, y: 250, w: 50, h: 50 });
 });
+
+import { apply, invert, multiply, sourceMatrix } from '../src/lib/geometry.mjs';
+test('sourceMatrix maps source corners to the output and back', () => {
+  const g = { ...IDENTITY, quarter: 1 };
+  const m = sourceMatrix(g, 400, 300, 'output');
+  // A clockwise quarter turn sends the source top-left to the output top-right.
+  const p = apply(m, 0, 0); near(p.x, 300); near(p.y, 0);
+  const q = apply(invert(m), 300, 0); near(q.x, 0); near(q.y, 0);
+  const flipped = sourceMatrix({ ...IDENTITY, flipH: true, crop: { x: 100, y: 0, w: 200, h: 300 } }, 400, 300, 'output');
+  const r = apply(flipped, 0, 0); near(r.x, 300); near(r.y, 0);
+  const id = multiply(m, invert(m)); [1, 0, 0, 1, 0, 0].forEach((v, i) => near(id[i], v));
+});

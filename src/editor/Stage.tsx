@@ -1,21 +1,33 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { centered, fitScale, toImage, zoomAt, type View } from '../lib/viewport.mjs';
-import { clampRect, effectiveCrop, orientedSize, outputSize, resizeCrop, type Rect } from '../lib/geometry.mjs';
-import { drawGeometry, type Doc } from './document';
+import { centered, fitScale, zoomAt, type View } from '../lib/viewport.mjs';
+import { apply, clampRect, effectiveCrop, invert, orientedSize, outputSize, resizeCrop, sourceMatrix, type Rect } from '../lib/geometry.mjs';
+import { applySourceTransform, drawGeometry, type Doc } from './document';
 
-export type Tool = 'hand' | 'zoom' | 'crop';
+export type Tool = 'move' | 'marquee' | 'ellipse' | 'lasso' | 'wand' | 'brush' | 'eraser' | 'fill' | 'gradient' | 'eyedropper' | 'text' | 'shape' | 'crop' | 'hand' | 'zoom';
+export type ToolPhase = 'down' | 'move' | 'up' | 'hover';
+/** Pointer position in document pixels, with pen pressure and modifier keys. */
+export interface ToolPointer { x: number; y: number; pressure: number; pointerType: string; shift: boolean; alt: boolean }
+
 interface Props {
   doc: Doc; image: HTMLCanvasElement | null; imageVersion: number; view: View | null; tool: Tool; spaceHeld: boolean; checkerboard: 'light' | 'dark';
   aspect: number; onCrop: (crop: Rect, final: boolean) => void;
   onView: (view: View) => void; onCursor: (point: { x: number; y: number } | null) => void; onSize: (size: { width: number; height: number }) => void;
+  /** Drawing tools receive pointer events in document pixels. */
+  onTool: (phase: ToolPhase, pointer: ToolPointer | null) => void;
+  /** Draws selection outlines, previews and the brush cursor in document pixels; `pixel` is one screen pixel in document units. */
+  overlay: (context: CanvasRenderingContext2D, pixel: number) => void;
+  overlayVersion: number;
 }
 type Gesture =
   | { kind: 'pan'; x: number; y: number; view: View }
   | { kind: 'pinch'; distance: number; mid: { x: number; y: number }; view: View }
-  | { kind: 'crop'; handle: string; x: number; y: number; start: Rect };
+  | { kind: 'crop'; handle: string; x: number; y: number; start: Rect }
+  | { kind: 'tool' };
 
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const HANDLE_CURSOR: Record<string, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', move: 'move' };
+const TOOL_CURSOR: Partial<Record<Tool, string>> = { move: 'move', brush: 'none', eraser: 'none', text: 'text', zoom: 'zoom-in', hand: 'grab', crop: 'grab' };
+const NAVIGATION: Tool[] = ['hand', 'zoom', 'crop'];
 
 function checkerPattern(context: CanvasRenderingContext2D, tone: 'light' | 'dark', dpr: number) {
   const cell = Math.round(8 * dpr);
@@ -38,7 +50,7 @@ function handlePoints(r: Rect) {
   return HANDLES.map(handle => ({ handle, x: xs[(handle.match(/[we]/)?.[0] || '') as keyof typeof xs], y: ys[(handle.match(/[ns]/)?.[0] || '') as keyof typeof ys] }));
 }
 
-export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checkerboard, aspect, onCrop, onView, onCursor, onSize }: Props) {
+export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checkerboard, aspect, onCrop, onView, onCursor, onSize, onTool, overlay, overlayVersion }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0, dpr: 1 });
@@ -120,10 +132,22 @@ export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checker
       for (let j = top; j <= bottom; j++) { const py = Math.round(y + j * scale) + .5; context.moveTo(x + left * scale, py); context.lineTo(x + right * scale, py); }
       context.strokeStyle = 'rgba(128,128,128,.35)'; context.lineWidth = 1; context.stroke();
     }
+    context.save();
+    context.beginPath(); context.rect(x, y, w, h); context.clip();
+    applySourceTransform(context, doc, x, y, scale, 'output');
+    overlay(context, 1 / scale * dpr);
+    context.restore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, size, doc, image, imageVersion, checkerboard, tool, crop.x, crop.y, crop.w, crop.h, content.width, content.height]);
+  }, [view, size, doc, image, imageVersion, checkerboard, tool, crop.x, crop.y, crop.w, crop.h, content.width, content.height, overlay, overlayVersion]);
 
   const local = (event: { clientX: number; clientY: number }) => { const rect = host.current!.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; };
+  const toDoc = (point: { x: number; y: number }, event: React.PointerEvent): ToolPointer | null => {
+    const v = viewRef.current;
+    if (!v) return null;
+    const out = { x: (point.x - v.x) / v.scale, y: (point.y - v.y) / v.scale };
+    const p = apply(invert(sourceMatrix(doc.geometry, doc.width, doc.height, 'output')), out.x, out.y);
+    return { x: p.x, y: p.y, pressure: event.pressure, pointerType: event.pointerType, shift: event.shiftKey, alt: event.altKey };
+  };
   const hitCrop = (point: { x: number; y: number }) => {
     const v = viewRef.current;
     if (!v || tool !== 'crop') return '';
@@ -158,27 +182,42 @@ export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checker
     pointers.current.set(event.pointerId, point);
     event.currentTarget.setPointerCapture(event.pointerId);
     if (pointers.current.size === 2) {
-      const [a, b] = [...pointers.current.values()];
+      // A second finger turns any gesture into pinch-zoom; an unfinished tool action is ended first.
       if (gesture.current?.kind === 'crop') setLiveCrop(null);
+      if (gesture.current?.kind === 'tool') onTool('up', null);
+      const [a, b] = [...pointers.current.values()];
       gesture.current = { kind: 'pinch', distance: Math.hypot(b.x - a.x, b.y - a.y) || 1, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, view: current };
       return;
     }
     const hit = event.button === 0 && !spaceHeld ? hitCrop(point) : '';
     if (hit) { gesture.current = { kind: 'crop', handle: hit, x: point.x, y: point.y, start: crop }; return; }
-    if (tool === 'hand' || tool === 'crop' || spaceHeld || event.button === 1) { gesture.current = { kind: 'pan', x: point.x, y: point.y, view: current }; setPanning(true); return; }
-    if (tool === 'zoom' && event.button === 0) onView(zoomAt(current, current.scale * (event.altKey ? 0.5 : 2), point.x, point.y));
+    if (NAVIGATION.includes(tool) && tool !== 'zoom' || spaceHeld || event.button === 1) { gesture.current = { kind: 'pan', x: point.x, y: point.y, view: current }; setPanning(true); return; }
+    if (tool === 'zoom' && event.button === 0) { onView(zoomAt(current, current.scale * (event.altKey ? 0.5 : 2), point.x, point.y)); return; }
+    if (event.button === 0) { gesture.current = { kind: 'tool' }; onTool('down', toDoc(point, event)); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, spaceHeld, onView, crop]);
+  }, [tool, spaceHeld, onView, crop, onTool, doc]);
 
   const pointerMove = useCallback((event: React.PointerEvent) => {
     const point = local(event);
     const current = viewRef.current;
-    if (current && tool !== 'crop') { const image = toImage(current, point.x, point.y); onCursor(image.x >= 0 && image.y >= 0 && image.x < content.width && image.y < content.height ? { x: Math.floor(image.x), y: Math.floor(image.y) } : null); }
-    if (!pointers.current.has(event.pointerId)) { setHover(hitCrop(point)); return; }
+    if (current && tool !== 'crop') {
+      const p = { x: (point.x - current.x) / current.scale, y: (point.y - current.y) / current.scale };
+      onCursor(p.x >= 0 && p.y >= 0 && p.x < content.width && p.y < content.height ? { x: Math.floor(p.x), y: Math.floor(p.y) } : null);
+    }
+    if (!pointers.current.has(event.pointerId)) {
+      setHover(hitCrop(point));
+      if (!NAVIGATION.includes(tool)) onTool('hover', toDoc(point, event));
+      return;
+    }
     pointers.current.set(event.pointerId, point);
     const g = gesture.current;
     if (g?.kind === 'pan') onView({ ...g.view, x: g.view.x + point.x - g.x, y: g.view.y + point.y - g.y });
-    else if (g?.kind === 'crop' && current) {
+    else if (g?.kind === 'tool') {
+      // Coalesced events keep fast pen strokes smooth.
+      const samples = (event.nativeEvent as PointerEvent).getCoalescedEvents?.() || [];
+      if (samples.length > 1) for (const sample of samples) onTool('move', toDoc(local(sample), { ...event, pressure: sample.pressure } as React.PointerEvent));
+      else onTool('move', toDoc(point, event));
+    } else if (g?.kind === 'crop' && current) {
       const dx = (point.x - g.x) / current.scale, dy = (point.y - g.y) / current.scale;
       const frame = { width: content.width, height: content.height };
       setLiveCrop(g.handle === 'move' ? clampRect({ ...g.start, x: g.start.x + dx, y: g.start.y + dy }, frame) : resizeCrop(g.start, g.handle, dx, dy, aspect, frame));
@@ -189,18 +228,21 @@ export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checker
       onView({ ...zoomed, x: zoomed.x + mid.x - g.mid.x, y: zoomed.y + mid.y - g.mid.y });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content.width, content.height, onView, onCursor, tool, aspect, crop]);
+  }, [content.width, content.height, onView, onCursor, tool, aspect, crop, onTool, doc]);
 
   const pointerUp = useCallback((event: React.PointerEvent) => {
     pointers.current.delete(event.pointerId);
     if (gesture.current?.kind === 'crop') { if (liveCrop) onCrop(liveCrop, true); setLiveCrop(null); }
+    if (gesture.current?.kind === 'tool') onTool('up', toDoc(local(event), event));
     if (pointers.current.size === 1 && gesture.current?.kind === 'pinch') { const [p] = [...pointers.current.values()]; gesture.current = { kind: 'pan', x: p.x, y: p.y, view: viewRef.current! }; return; }
     if (!pointers.current.size) { gesture.current = null; setPanning(false); }
-  }, [liveCrop, onCrop]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCrop, onCrop, onTool, doc]);
 
   const active = gesture.current?.kind === 'crop' ? gesture.current.handle : hover;
-  const cursor = panning ? 'grabbing' : active && !spaceHeld ? HANDLE_CURSOR[active] : tool === 'hand' || tool === 'crop' || spaceHeld ? 'grab' : tool === 'zoom' ? 'zoom-in' : 'default';
-  return <div ref={host} className="stage" style={{ cursor }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={() => { onCursor(null); setHover(''); }}
+  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : active ? HANDLE_CURSOR[active] : TOOL_CURSOR[tool] || 'crosshair';
+  return <div ref={host} className="stage" style={{ cursor }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp}
+    onPointerLeave={() => { onCursor(null); setHover(''); if (!pointers.current.size) onTool('hover', null); }}
     onDoubleClick={() => { if (tool === 'hand') onView(centered(content.width, content.height, size.width, size.height, fitScale(content.width, content.height, size.width, size.height))); }}>
     <canvas ref={canvas} aria-label="キャンバス" role="img"/>
   </div>;

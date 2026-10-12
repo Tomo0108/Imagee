@@ -53,6 +53,7 @@ try {
   await page.keyboard.press('Control+0');
 
   // Adjustments: a slider drag is one history step, auto-correct is another.
+  await page.getByRole('tab', { name: '調整' }).click();
   await page.getByRole('slider', { name: '露光量' }).fill('0.8');
   await page.getByRole('slider', { name: '露光量' }).fill('1');
   await page.getByRole('slider', { name: '露光量' }).dispatchEvent('pointerup');
@@ -99,6 +100,80 @@ try {
   await page.getByRole('button', { name: '夕焼け.pngを開く' }).click();
   assert.equal(await page.locator('.doc-title span').textContent(), dims, 'edits are restored when reopening');
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+
+  // Painting, selections, layers, masks, text and shapes on the square image; all of it survives reopening.
+  await page.getByRole('button', { name: 'square.pngを開く' }).click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(400);
+  const stage = await page.locator('.stage').boundingBox();
+  const cx = Math.round(stage.x + stage.width / 2), cy = Math.round(stage.y + stage.height / 2);
+  const pixel = (x, y) => page.evaluate(([x, y]) => {
+    const c = document.querySelector('.stage canvas'), r = c.getBoundingClientRect(), k = c.width / r.width;
+    return [...c.getContext('2d').getImageData(Math.round((x - r.left) * k), Math.round((y - r.top) * k), 1, 1).data];
+  }, [x, y]);
+  const blur = () => page.evaluate(() => document.activeElement?.blur());
+  const drag = async (from, to, steps = 10) => { await page.mouse.move(...from); await page.mouse.down(); await page.mouse.move(...to, { steps }); await page.mouse.up(); await page.waitForTimeout(120); };
+  const isRed = ([r, g, b]) => r > 200 && g < 60 && b < 60, isBlue = ([r, g, b]) => b > 200 && r < 60 && g < 60;
+
+  await page.getByLabel('描画色', { exact: true }).fill('#ff0000');
+  await blur();
+  await page.keyboard.press('b');
+  await drag([cx - 150, cy - 150], [cx + 150, cy - 150]);
+  assert.ok(isRed(await pixel(cx - 100, cy - 150)), 'brush paints the foreground colour');
+
+  await page.keyboard.press('Shift+N');
+  await page.keyboard.press('m');
+  await drag([cx - 60, cy - 20], [cx + 60, cy + 80], 5);
+  await page.getByLabel('描画色', { exact: true }).fill('#0000ff');
+  await blur();
+  await page.keyboard.press('Alt+Backspace');
+  await page.waitForTimeout(150);
+  assert.ok(isBlue(await pixel(cx - 45, cy + 70)), 'selection fills with the foreground colour');
+  assert.ok(!isBlue(await pixel(cx - 100, cy + 70)), 'fill stays inside the selection');
+  await page.keyboard.press('Control+d');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  assert.ok(!isBlue(await pixel(cx - 45, cy + 70)), 'undo removes the fill');
+  await page.keyboard.press('Control+Shift+z');
+  await page.waitForTimeout(150);
+  assert.ok(isBlue(await pixel(cx - 45, cy + 70)), 'redo restores the fill');
+
+  await page.keyboard.press('t');
+  await page.mouse.click(cx - 150, cy + 150);
+  await page.getByRole('textbox', { name: 'テキスト' }).fill('こんにちは Imagee');
+  await blur();
+  await page.keyboard.press('u');
+  await drag([cx + 40, cy - 120], [cx + 160, cy - 40], 5);
+
+  await page.locator('.layer-list li', { hasText: 'レイヤー 1' }).locator('.layer-main').click();
+  await page.getByRole('button', { name: /^マスクを追加/ }).click();
+  await page.keyboard.press('d');
+  await page.keyboard.press('b');
+  await drag([cx - 20, cy + 30], [cx + 20, cy + 30], 6);
+  assert.ok(!isBlue(await pixel(cx, cy + 30)), 'black on a mask hides the layer');
+  assert.ok(isBlue(await pixel(cx - 45, cy + 70)), 'the rest of the layer stays visible');
+
+  await page.keyboard.press('w');
+  await page.mouse.click(cx + 100, cy + 100);
+  await page.locator('.status-bar', { hasText: '選択' }).waitFor();
+  await page.screenshot({ path: `${out}/editor-paint-dark.png` });
+  await page.keyboard.press('Control+d');
+  const layerNames = async () => page.locator('.layer-list .layer-name').allTextContents();
+  assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', 'レイヤー 1', '背景']);
+  await page.getByRole('tab', { name: '履歴' }).click();
+  const labels = await page.locator('.history-list li').allTextContents();
+  for (const label of ['ブラシ', '新規レイヤー', '描画色で塗りつぶし', 'テキストを追加', 'テキストを編集', '図形を追加', 'マスクを追加', 'マスクを編集']) assert.ok(labels.includes(label), `history has ${label}: ${labels}`);
+
+  const painted = [await pixel(cx - 100, cy - 150), await pixel(cx - 45, cy + 70), await pixel(cx, cy + 30)];
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await page.waitForTimeout(1500);
+  await page.getByRole('button', { name: 'square.pngを開く' }).click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(600);
+  assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', 'レイヤー 1', '背景'], 'layers are restored');
+  assert.ok(isRed(await pixel(cx - 100, cy - 150)) && isBlue(await pixel(cx - 45, cy + 70)) && !isBlue(await pixel(cx, cy + 30)), `painting is restored: ${painted}`);
+  await page.screenshot({ path: `${out}/editor-reopened-dark.png` });
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();
   await page.locator('.project').first().waitFor();
@@ -112,6 +187,11 @@ try {
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${out}/library-mobile-light.png` });
+  await page.getByRole('button', { name: 'portrait.pngを開く' }).click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(300);
+  await page.keyboard.press('b');
+  await page.screenshot({ path: `${out}/editor-mobile-light.png` });
 
   assert.deepEqual(errors, []);
   await browser.close();

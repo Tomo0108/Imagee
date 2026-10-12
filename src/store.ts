@@ -2,11 +2,13 @@ export interface Project { id: string; name: string; type: string; size: number;
 
 // Image bytes are stored once in `sources`; library reads and edits only touch metadata.
 const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-  const request = indexedDB.open('imagee-library', 1);
+  const request = indexedDB.open('imagee-library', 2);
   request.onupgradeneeded = () => {
     const db = request.result;
-    db.createObjectStore('projects', { keyPath: 'id' });
-    db.createObjectStore('sources', { keyPath: 'id' });
+    if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
+    if (!db.objectStoreNames.contains('sources')) db.createObjectStore('sources', { keyPath: 'id' });
+    // Painted layer pixels, keyed "<project id>/<surface key>".
+    if (!db.objectStoreNames.contains('pixels')) db.createObjectStore('pixels', { keyPath: 'id' });
   };
   request.onsuccess = () => { const db = request.result; db.onversionchange = () => db.close(); resolve(db); };
   request.onerror = () => reject(request.error);
@@ -46,8 +48,27 @@ export async function updateProject(project: Project): Promise<void> {
 }
 export async function removeProjects(ids: string[]): Promise<void> {
   const db = await dbPromise;
-  const transaction = db.transaction(['projects', 'sources'], 'readwrite');
+  const transaction = db.transaction(['projects', 'sources', 'pixels'], 'readwrite');
   const done = completed(transaction);
-  for (const id of ids) { transaction.objectStore('projects').delete(id); transaction.objectStore('sources').delete(id); }
+  for (const id of ids) {
+    transaction.objectStore('projects').delete(id); transaction.objectStore('sources').delete(id);
+    transaction.objectStore('pixels').delete(IDBKeyRange.bound(`${id}/`, `${id}/\uffff`));
+  }
+  await done;
+}
+export async function readPixels(projectId: string): Promise<Map<string, Blob>> {
+  const db = await dbPromise;
+  const rows: { id: string; blob: Blob }[] = await result(db.transaction('pixels').objectStore('pixels').getAll(IDBKeyRange.bound(`${projectId}/`, `${projectId}/\uffff`)));
+  return new Map(rows.map(row => [row.id.slice(projectId.length + 1), row.blob]));
+}
+/** Writes changed surfaces and removes ones no longer used. */
+export async function writePixels(projectId: string, changed: Map<string, Blob>, keep: Set<string>): Promise<void> {
+  const db = await dbPromise;
+  const existing: string[] = (await result(db.transaction('pixels').objectStore('pixels').getAllKeys(IDBKeyRange.bound(`${projectId}/`, `${projectId}/\uffff`)))).map(String);
+  const transaction = db.transaction('pixels', 'readwrite');
+  const done = completed(transaction);
+  const store = transaction.objectStore('pixels');
+  for (const [key, blob] of changed) store.put({ id: `${projectId}/${key}`, blob });
+  for (const id of existing) if (!keep.has(id.slice(projectId.length + 1))) store.delete(id);
   await done;
 }

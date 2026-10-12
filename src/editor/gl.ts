@@ -76,7 +76,7 @@ export class Adjuster {
 
   /** Sets the image to adjust; its size must not exceed `maxSize`. */
   setSource(source: HTMLCanvasElement | ImageBitmap) {
-    this.source = source;
+    this.source = source; this.dirty = null; this.lastAdjustments = null;
     this.canvas.width = source.width; this.canvas.height = source.height;
     const gl = this.gl;
     if (gl) {
@@ -92,6 +92,27 @@ export class Adjuster {
     }
   }
 
+  /** Re-uploads part of the source after it changed (a brush stroke), in source-canvas pixels. */
+  updateRegion(source: HTMLCanvasElement, box: { x: number; y: number; w: number; h: number }) {
+    if (source.width !== this.canvas.width || source.height !== this.canvas.height) return this.setSource(source);
+    const x = Math.max(0, Math.floor(box.x)), y = Math.max(0, Math.floor(box.y));
+    const w = Math.min(source.width, Math.ceil(box.x + box.w)) - x, h = Math.min(source.height, Math.ceil(box.y + box.h)) - y;
+    if (w <= 0 || h <= 0) return;
+    const data = source.getContext('2d')!.getImageData(x, y, w, h);
+    this.source = source;
+    const gl = this.gl;
+    if (gl) {
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    } else if (this.sourceData) {
+      for (let row = 0; row < h; row++) this.sourceData.data.set(data.data.subarray(row * w * 4, (row + 1) * w * 4), ((y + row) * this.sourceData.width + x) * 4);
+      this.dirty = { x, y, w, h };
+    }
+  }
+  private dirty: { x: number; y: number; w: number; h: number } | null = null;
+  private lastAdjustments: Adjustments | null = null;
+
   render(adjustments: Adjustments): HTMLCanvasElement {
     const gl = this.gl;
     if (gl) {
@@ -99,14 +120,19 @@ export class Adjuster {
       gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     } else if (this.sourceData && this.source) {
-      const out = new ImageData(new Uint8ClampedArray(this.sourceData.data), this.sourceData.width, this.sourceData.height);
+      // On the CPU only redo the area a stroke touched when the settings did not change.
+      const src = this.sourceData;
+      const box = this.dirty && this.lastAdjustments === adjustments ? this.dirty : { x: 0, y: 0, w: src.width, h: src.height };
+      const out = new ImageData(box.w, box.h);
       const d = out.data;
+      for (let row = 0; row < box.h; row++) d.set(src.data.subarray(((box.y + row) * src.width + box.x) * 4, ((box.y + row) * src.width + box.x + box.w) * 4), row * box.w * 4);
       for (let i = 0; i < d.length; i += 4) {
         if (!d[i + 3]) continue;
         const [r, g, b] = adjustPixel([d[i] / 255, d[i + 1] / 255, d[i + 2] / 255], adjustments);
         d[i] = r * 255; d[i + 1] = g * 255; d[i + 2] = b * 255;
       }
-      this.canvas.getContext('2d')!.putImageData(out, 0, 0);
+      this.canvas.getContext('2d')!.putImageData(out, box.x, box.y);
+      this.dirty = null; this.lastAdjustments = adjustments;
     }
     return this.canvas;
   }

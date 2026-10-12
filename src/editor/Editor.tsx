@@ -1,72 +1,174 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Crop, Download, Eye, EyeOff, FlipHorizontal2, FlipVertical2, Hand, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, Wand2, ZoomIn, SplitSquareHorizontal } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { ArrowLeft, Check, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
 import type { Project } from '../store';
-import { readSource } from '../store';
-import { decode, histogram, thumbnail, canvas as makeCanvas, type Histogram } from '../imaging';
+import { readPixels, readSource, writePixels } from '../store';
+import { decode, histogram, thumbnail, toBlob, canvas as makeCanvas } from '../imaging';
 import type { Preferences } from '../lib/preferences.mjs';
 import { centered, fitScale, formatZoom, stepZoom, zoomAt, type View } from '../lib/viewport.mjs';
-import { commit, createHistory, entries, jump, redo, undo, type History } from '../lib/history.mjs';
-import { formatBytes } from '../lib/files.mjs';
-import { autoAdjust, CONTROLS, NEUTRAL, type Adjustments } from '../lib/adjust.mjs';
+import { commit, createHistory, jump, redo, undo, type History } from '../lib/history.mjs';
+import { autoAdjust, NEUTRAL, type Adjustments } from '../lib/adjust.mjs';
 import { ASPECTS, autoCrop, fitAspect, flip, IDENTITY, MAX_ANGLE, orientedSize, outputSize, rotateQuarter, type Rect } from '../lib/geometry.mjs';
-import { BLEND_MODES, composite, createDoc, drawGeometry, savedEdits, type Bitmaps, type Doc, type Layer } from './document';
+import { floodMask } from '../lib/flood.mjs';
+import { effectivePressure } from '../lib/brush.mjs';
+import { compositeInto, createDoc, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer } from './document';
+import { PixelStore, union, type Box } from './pixels';
+import { arrayMask, combine, invertSelection, selectAll, shapeMask, type SelectMode, type Selection } from './selection';
+import { bucketFill, editSurface, gradientFill, hexToRgb, rgbToHex, Stroke } from './tools';
 import { Adjuster } from './gl';
-import { contentSize, Stage, type Tool } from './Stage';
+import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from './Stage';
 import { ExportSheet } from './ExportSheet';
-import { IconButton, Kbd, Slider, mod } from '../ui';
+import { AdjustPanel, HistoryPanel, InfoPanel, LayersPanel, type LayerActions } from './panels';
+import { loadSettings, storeSettings, ToolOptions, ToolRail, type ToolSettings } from './toolbar';
+import { pickImages } from '../platform';
+import { isImageFile } from '../lib/files.mjs';
+import { IconButton, Slider, mod } from '../ui';
 
 type Tab = 'adjust' | 'layers' | 'history' | 'info';
+type Point = { x: number; y: number };
 interface Props { project: Project; prefs: Preferences; onClose: () => void; onUpdate: (project: Project) => void; onToast: (message: string) => void; onSettings: () => void }
+/** A pointer action in progress on the canvas. */
+type Action =
+  | { kind: 'stroke'; stroke: Stroke; layerId: string; mask: boolean; label: string }
+  | { kind: 'select'; shape: 'rect' | 'ellipse'; start: Point; end: Point; mode: SelectMode; square: boolean }
+  | { kind: 'lasso'; points: Point[]; mode: SelectMode }
+  | { kind: 'gradient'; start: Point; end: Point }
+  | { kind: 'shape'; start: Point; end: Point; constrain: boolean }
+  | { kind: 'move'; id: string; start: Point; origin: Point };
+/** Where painting lands: a raster layer or a layer mask, with its position in the document. */
+interface Surface { key: string; layer: Layer; mask: boolean; offset: Point }
+
+const box = (a: Point, b: Point, square = false): Box => {
+  let w = b.x - a.x, h = b.y - a.y;
+  if (square) { const side = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * side; h = Math.sign(h || 1) * side; }
+  return { x: Math.min(a.x, a.x + w), y: Math.min(a.y, a.y + h), w: Math.abs(w), h: Math.abs(h) };
+};
+/** Snaps a line to 45° steps (Shift). */
+const snapLine = (a: Point, b: Point): Point => {
+  const angle = Math.round(Math.atan2(b.y - a.y, b.x - a.x) / (Math.PI / 4)) * (Math.PI / 4), length = Math.hypot(b.x - a.x, b.y - a.y);
+  return { x: a.x + Math.cos(angle) * length, y: a.y + Math.sin(angle) * length };
+};
+const luminance = (hex: string) => { const [r, g, b] = hexToRgb(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const clearColor = (hex: string) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},0)`; };
 
 export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings }: Props) {
-  const [bitmaps, setBitmaps] = useState<Bitmaps | null>(null);
   const [history, setHistory] = useState<History<Doc> | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [tool, setToolState] = useState<Tool>('hand');
   const [space, setSpace] = useState(false);
   const [before, setBefore] = useState(false);
-  const [tab, setTab] = useState<Tab>('adjust');
+  const [tab, setTab] = useState<Tab>('layers');
   const [aspectId, setAspectId] = useState('free');
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  const [cursor, setCursor] = useState<Point | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
-  const adjuster = useMemo(() => new Adjuster(), []);
-  const [flat, setFlat] = useState<HTMLCanvasElement | null>(null);
   const [version, setVersion] = useState(0);
+  const [overlayVersion, bumpOverlay] = useReducer((n: number) => n + 1, 0);
+  const [settings, setSettingsState] = useState<ToolSettings>(loadSettings);
+  const [colors, setColors] = useState<[string, string]>(['#000000', '#ffffff']);
+  const [selection, setSelectionState] = useState<Selection | null>(null);
+  const [target, setTarget] = useState<'layer' | 'mask'>('layer');
+  const [editText, setEditText] = useState(false);
+  const adjuster = useMemo(() => new Adjuster(), []);
+  const store = useMemo(() => new PixelStore(), []);
+  const cache = useMemo(() => new LayerCache(), []);
+  const work = useRef<HTMLCanvasElement | null>(null);
+  const historyRef = useRef<History<Doc> | null>(null);
+  const selectionRef = useRef<Selection | null>(null);
+  const action = useRef<Action | null>(null);
+  const hover = useRef<ToolPointer | null>(null);
   const merging = useRef<string | null>(null);
+  const composited = useRef<Layer[] | null>(null);
+  const clipboard = useRef<{ canvas: HTMLCanvasElement; bounds: Box } | null>(null);
+  /** Size of the PNG we last put on the system clipboard, so pasting it back lands in place. */
+  const clipboardStamp = useRef(0);
   const projectRef = useRef(project); projectRef.current = project;
 
+  const apply = useCallback((next: History<Doc>) => { historyRef.current = next; setHistory(next); }, []);
+  const setSelection = useCallback((next: Selection | null) => { selectionRef.current = next; setSelectionState(next); }, []);
+  const setSettings = useCallback((patch: Partial<ToolSettings>) => setSettingsState(current => { const next = { ...current, ...patch }; storeSettings(next); return next; }), []);
+
+  // Open: decode the original, then restore painted surfaces from storage. Revisions are renumbered for this session.
   useEffect(() => {
-    let cancelled = false, loaded: ImageBitmap | undefined;
+    let cancelled = false;
     (async () => {
       const blob = await readSource(project.id);
       if (!blob) throw new Error('元の画像が見つかりません。ライブラリに追加し直してください。');
-      loaded = await decode(blob);
-      if (cancelled) return loaded.close();
-      const id = 'background';
-      setBitmaps(new Map([[id, loaded]]));
-      setHistory(createHistory<Doc>(createDoc(loaded.width, loaded.height, id, project.edits)));
+      const [bitmap, pixels] = await Promise.all([decode(blob), readPixels(project.id).catch(() => new Map<string, Blob>())]);
+      if (cancelled) { bitmap.close(); return; }
+      const { width, height } = bitmap;
+      const background: RasterLayer = { kind: 'raster', id: 'background', name: '背景', visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: 0 };
+      const initial = createDoc(width, height, background, project.edits);
+      const restore = async (key: string) => { const saved = pixels.get(key); return saved ? decode(saved).catch(() => undefined) : undefined; };
+      const layers: Layer[] = [];
+      for (const layer of initial.layers) {
+        let next = layer;
+        if (layer.kind === 'raster') {
+          const saved = await restore(layer.id);
+          const rev = store.create(layer.id, width, height, saved || (layer.id === 'background' ? bitmap : undefined));
+          saved?.close();
+          store.saved.set(layer.id, rev);
+          next = { ...layer, rev };
+        }
+        if (layer.mask) {
+          const key = maskKey(layer.id), saved = await restore(key);
+          const rev = createMask(store, key, width, height, saved);
+          saved?.close();
+          store.saved.set(key, rev);
+          next = { ...next, mask: { ...layer.mask, rev } };
+        }
+        layers.push(next);
+      }
+      bitmap.close();
+      if (cancelled) return;
+      const doc = { ...initial, layers };
+      work.current = workCanvas(doc, adjuster.maxSize);
+      apply(createHistory<Doc>(doc));
     })().catch(e => !cancelled && setError(e.message));
-    return () => { cancelled = true; loaded?.close(); };
+    return () => { cancelled = true; };
     // Only reload when a different image is opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
   const doc = history?.present;
-  const layersKey = doc?.layers;
-  // Layers → flattened source → adjustments. The adjusted canvas is reused; `version` tells the stage to redraw.
+  // Layers → composite at working size → adjustments. Surfaces follow the revisions the document points at,
+  // so undo and redo of painting are just changes of the document.
   useEffect(() => {
-    if (!doc || !bitmaps) return;
-    const next = composite(doc, bitmaps, adjuster.maxSize);
-    adjuster.setSource(next);
-    setFlat(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layersKey, bitmaps, adjuster]);
-  useEffect(() => { if (doc && flat) { adjuster.render(doc.adjust); setVersion(v => v + 1); } }, [doc?.adjust, flat, adjuster]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!doc || !work.current || composited.current === doc.layers) return;
+    for (const layer of doc.layers) {
+      if (layer.kind === 'raster') store.sync(layer.id, layer.rev);
+      if (layer.mask) store.sync(maskKey(layer.id), layer.mask.rev);
+    }
+    compositeInto(work.current, doc, store, cache);
+    adjuster.setSource(work.current);
+    adjuster.render(doc.adjust);
+    composited.current = doc.layers;
+    setVersion(v => v + 1);
+  }, [doc?.layers]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (doc && composited.current) { adjuster.render(doc.adjust); setVersion(v => v + 1); } }, [doc?.adjust]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Autosave edits with the project so reopening restores them.
-  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.geometry]); // eslint-disable-line react-hooks/exhaustive-deps
+  // While painting, only the touched area is recomposited, once per frame.
+  const frame = useRef(0), pending = useRef<Box | null>(null);
+  const refresh = useCallback((area: Box | null) => {
+    if (!area) return;
+    pending.current = union(pending.current, area);
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      const region = pending.current, d = historyRef.current?.present, target = work.current;
+      pending.current = null;
+      if (!region || !d || !target) return;
+      compositeInto(target, d, store, cache, region);
+      const k = target.width / d.width;
+      adjuster.updateRegion(target, { x: region.x * k - 2, y: region.y * k - 2, w: region.w * k + 4, h: region.h * k + 4 });
+      adjuster.render(d.adjust);
+      setVersion(v => v + 1);
+    });
+  }, [adjuster, store, cache]);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+
+  // Autosave: edits as JSON with the project, painted surfaces as PNG in their own store.
+  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.geometry, doc?.selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const firstEdits = useRef(true);
   useEffect(() => {
     if (!edits) return;
@@ -74,17 +176,73 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const timer = setTimeout(() => onUpdate({ ...projectRef.current, edits, edited: Date.now() }), 400);
     return () => clearTimeout(timer);
   }, [edits, onUpdate]);
+  const saving = useRef(Promise.resolve());
+  const savedKeys = useRef('');
+  const savePixels = useCallback(() => {
+    const d = historyRef.current?.present;
+    if (!d) return;
+    const keys: [string, number][] = [];
+    for (const layer of d.layers) {
+      if (layer.kind === 'raster') keys.push([layer.id, layer.rev]);
+      if (layer.mask) keys.push([maskKey(layer.id), layer.mask.rev]);
+    }
+    const changed = keys.filter(([key, rev]) => store.saved.get(key) !== rev && store.rev(key) === rev);
+    const keep = keys.map(([key]) => key).sort().join('\n');
+    if (!changed.length && keep === savedKeys.current) return;
+    saving.current = saving.current.then(async () => {
+      const blobs = new Map<string, Blob>();
+      for (const [key] of changed) blobs.set(key, await toBlob(store.get(key)!, 'image/png'));
+      await writePixels(projectRef.current.id, blobs, new Set(keys.map(([key]) => key)));
+      for (const [key, rev] of changed) store.saved.set(key, rev);
+      savedKeys.current = keep;
+    }).catch(() => onToast('描画内容を保存できませんでした。空き容量を確認してください。'));
+  }, [store, onToast]);
+  useEffect(() => {
+    if (!doc) return;
+    const timer = setTimeout(savePixels, 1000);
+    return () => clearTimeout(timer);
+  }, [doc?.layers, savePixels]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const change = useCallback((recipe: (doc: Doc) => Doc, label: string, gesture = false) => {
-    setHistory(h => h && commit(h, recipe(h.present), label, gesture && merging.current === label));
+    const h = historyRef.current;
+    if (!h) return null;
+    const next = recipe(h.present);
+    apply(commit(h, next, label, gesture && merging.current === label));
     merging.current = gesture ? label : null;
-  }, []);
+    return next;
+  }, [apply]);
   const endGesture = useCallback(() => { merging.current = null; }, []);
   const updateLayer = useCallback((id: string, patch: Partial<Layer>, label: string, gesture = false) =>
-    change(d => ({ ...d, layers: d.layers.map(layer => layer.id === id ? { ...layer, ...patch } : layer) }), label, gesture), [change]);
+    change(d => ({ ...d, layers: d.layers.map(layer => layer.id === id ? { ...layer, ...patch } as Layer : layer) }), label, gesture), [change]);
   const setAdjust = useCallback((patch: Partial<Adjustments>, label: string, gesture = false) => change(d => ({ ...d, adjust: { ...d.adjust, ...patch } }), label, gesture), [change]);
+  /** Choosing a layer is not an edit, so it changes the present state without a history step. */
+  const selectLayer = useCallback((id: string) => {
+    const h = historyRef.current;
+    if (h && h.present.selected !== id) apply({ ...h, present: { ...h.present, selected: id } });
+    setEditText(false);
+  }, [apply]);
+  /** Records that a surface reached a new revision. When the working composite already shows it, skip recompositing. */
+  const commitSurface = useCallback((layerId: string, mask: boolean, rev: number, label: string, current: boolean) => {
+    const next = change(d => ({ ...d, layers: d.layers.map(layer => layer.id !== layerId ? layer : mask ? { ...layer, mask: { ...layer.mask!, rev } } : { ...layer, rev } as Layer) }), label);
+    if (next && current) composited.current = next.layers;
+  }, [change]);
+  const insertLayer = useCallback((layer: Layer, label: string) => change(d => {
+    const index = d.layers.findIndex(l => l.id === d.selected);
+    const layers = [...d.layers];
+    layers.splice(index + 1, 0, layer);
+    return { ...d, layers, selected: layer.id };
+  }, label), [change]);
+  const newRaster = useCallback((d: Doc, name = uniqueName(d.layers, 'レイヤー'), source?: (context: CanvasRenderingContext2D) => void): RasterLayer => {
+    const id = newLayerId();
+    store.create(id, d.width, d.height);
+    if (source) source(store.context(id));
+    return { kind: 'raster', id, name, visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: store.rev(id)! };
+  }, [store]);
 
-  const setTool = useCallback((next: Tool) => { setToolState(current => { if ((current === 'crop') !== (next === 'crop')) setView(null); return next; }); }, []);
+  const setTool = useCallback((next: Tool) => {
+    action.current = null;
+    setToolState(current => { if ((current === 'crop') !== (next === 'crop')) setView(null); return next; });
+  }, []);
   const fit = useCallback(() => {
     if (!doc || !viewport.width) return;
     const size = contentSize(doc, tool);
@@ -95,6 +253,217 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   // Refit when the output size changes (crop, rotation) so the result is always framed.
   const output = doc ? outputSize(doc.geometry, doc.width, doc.height) : null;
   useEffect(() => { if (tool !== 'crop') setView(null); }, [output?.width, output?.height]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selected = doc ? doc.layers.find(layer => layer.id === doc.selected) || doc.layers[doc.layers.length - 1] : null;
+  useEffect(() => { if (selected && !selected.mask && target === 'mask') setTarget('layer'); }, [selected, target]);
+
+  /** The surface painting tools work on. Painting on a text or shape layer starts a new layer above it. */
+  const surfaceFor = useCallback((paints: boolean): Surface | null => {
+    const d = historyRef.current?.present;
+    const layer = d?.layers.find(l => l.id === d.selected);
+    if (!d || !layer) return null;
+    if (!layer.visible) { onToast('非表示のレイヤーには描けません。'); return null; }
+    if (target === 'mask' && layer.mask) return { key: maskKey(layer.id), layer, mask: true, offset: { x: 0, y: 0 } };
+    if (layer.kind === 'raster') return { key: layer.id, layer, mask: false, offset: { x: layer.x, y: layer.y } };
+    if (!paints) { onToast('テキストや図形のレイヤーは、ラスタライズすると消去できます。'); return null; }
+    const created = newRaster(d);
+    insertLayer(created, '新規レイヤー');
+    return { key: created.id, layer: created, mask: false, offset: { x: 0, y: 0 } };
+  }, [target, newRaster, insertLayer, onToast]);
+
+  const sample = useCallback((p: Point) => {
+    const d = historyRef.current?.present, source = work.current;
+    if (!d || !source) return null;
+    const k = source.width / d.width;
+    const x = Math.floor(p.x * k), y = Math.floor(p.y * k);
+    if (x < 0 || y < 0 || x >= source.width || y >= source.height) return null;
+    const [r, g, b, a] = source.getContext('2d')!.getImageData(x, y, 1, 1).data;
+    return a ? rgbToHex(r, g, b) : null;
+  }, []);
+  const pickColor = useCallback((p: ToolPointer) => {
+    const color = sample(p);
+    if (color) setColors(current => p.alt ? [current[0], color] : [color, current[1]]);
+  }, [sample]);
+
+  const begin = useCallback((p: ToolPointer, d: Doc) => {
+    const mode: SelectMode = p.shift ? 'add' : p.alt ? 'subtract' : settings.selectMode;
+    const layer = d.layers.find(l => l.id === d.selected)!;
+    switch (tool) {
+      case 'move': action.current = { kind: 'move', id: layer.id, start: p, origin: { x: layer.x, y: layer.y } }; break;
+      case 'marquee': case 'ellipse': action.current = { kind: 'select', shape: tool === 'marquee' ? 'rect' : 'ellipse', start: p, end: p, mode, square: false }; break;
+      case 'lasso': action.current = { kind: 'lasso', points: [p], mode }; break;
+      case 'wand': {
+        const source = work.current!;
+        const k = source.width / d.width;
+        const data = source.getContext('2d')!.getImageData(0, 0, source.width, source.height);
+        const values = floodMask(data.data, source.width, source.height, p.x * k, p.y * k, settings.tolerance, settings.contiguous);
+        setSelection(combine(selectionRef.current, arrayMask(values, source.width, source.height, d.width, d.height), mode));
+        break;
+      }
+      case 'eyedropper': pickColor(p); break;
+      case 'brush': case 'eraser': {
+        if (tool === 'brush' && p.alt) { pickColor({ ...p, alt: false }); break; }
+        const surface = surfaceFor(tool === 'brush');
+        if (!surface) break;
+        const color = tool === 'brush' ? colors[0] : colors[1];
+        const effect = surface.mask ? (luminance(color) < 128 ? 'hide' : 'reveal') : tool === 'brush' ? 'paint' : 'erase';
+        const stroke = new Stroke(store, surface.key, settings[tool], color, effect, surface.offset, selectionRef.current);
+        action.current = { kind: 'stroke', stroke, layerId: surface.layer.id, mask: surface.mask, label: surface.mask ? 'マスクを編集' : tool === 'brush' ? 'ブラシ' : '消しゴム' };
+        refresh(stroke.add({ x: p.x, y: p.y, pressure: effectivePressure(p.pressure, p.pointerType) }));
+        break;
+      }
+      case 'fill': {
+        const surface = surfaceFor(true);
+        if (!surface) break;
+        if (surface.mask) { onToast('マスクにはブラシかグラデーションを使ってください。'); break; }
+        const changed = bucketFill(store, surface.key, p, colors[0], settings.fillOpacity, settings.tolerance, settings.contiguous, surface.offset, selectionRef.current);
+        if (changed) commitSurface(surface.layer.id, false, store.rev(surface.key)!, '塗りつぶし', false);
+        break;
+      }
+      case 'gradient': action.current = { kind: 'gradient', start: p, end: p }; break;
+      case 'shape': action.current = { kind: 'shape', start: p, end: p, constrain: false }; break;
+      case 'text': {
+        const hit = [...d.layers].reverse().find(l => {
+          const b = l.kind === 'text' && l.visible ? cache.bounds(l, store) : null;
+          return b && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+        });
+        if (hit) { selectLayer(hit.id); setEditText(true); setTab('layers'); break; }
+        const size = Math.max(12, Math.round(Math.min(d.width, d.height) / 12));
+        const text: TextLayer = { kind: 'text', id: newLayerId(), name: uniqueName(d.layers, 'テキスト'), visible: true, opacity: 100, blend: 'source-over', x: Math.round(p.x), y: Math.round(p.y - size * 0.65),
+          text: { content: 'テキスト', font: FONTS[0].value, size, weight: 700, italic: false, color: colors[0], align: 'left', vertical: false, lineHeight: 1.3 } };
+        insertLayer(text, 'テキストを追加');
+        setEditText(true); setTab('layers');
+        break;
+      }
+    }
+    bumpOverlay();
+  }, [tool, settings, colors, store, cache, surfaceFor, pickColor, refresh, commitSurface, insertLayer, selectLayer, setSelection, onToast]);
+
+  const move = useCallback((p: ToolPointer) => {
+    const a = action.current;
+    if (!a) return;
+    if (a.kind === 'stroke') refresh(a.stroke.add({ x: p.x, y: p.y, pressure: effectivePressure(p.pressure, p.pointerType) }));
+    else if (a.kind === 'select') { a.end = p; a.square = p.shift && a.mode !== 'add'; }
+    else if (a.kind === 'lasso') { const last = a.points[a.points.length - 1]; if (Math.hypot(p.x - last.x, p.y - last.y) > 1) a.points.push(p); }
+    else if (a.kind === 'gradient') a.end = p.shift ? snapLine(a.start, p) : p;
+    else if (a.kind === 'shape') { a.end = p; a.constrain = p.shift; }
+    else if (a.kind === 'move') updateLayer(a.id, { x: Math.round(a.origin.x + p.x - a.start.x), y: Math.round(a.origin.y + p.y - a.start.y) }, '移動', true);
+    bumpOverlay();
+  }, [refresh, updateLayer]);
+
+  const finish = useCallback(() => {
+    const a = action.current, d = historyRef.current?.present;
+    action.current = null;
+    if (!a || !d) return;
+    if (a.kind === 'stroke') {
+      cancelAnimationFrame(frame.current); frame.current = 0;
+      const area = pending.current;
+      pending.current = null;
+      const rev = a.stroke.end();
+      if (rev === null) return;
+      // Finish the last frame's region before marking the composite current.
+      if (area && work.current) {
+        compositeInto(work.current, d, store, cache, area);
+        const k = work.current.width / d.width;
+        adjuster.updateRegion(work.current, { x: area.x * k - 2, y: area.y * k - 2, w: area.w * k + 4, h: area.h * k + 4 });
+        adjuster.render(d.adjust);
+      }
+      commitSurface(a.layerId, a.mask, rev, a.label, true);
+      setVersion(v => v + 1);
+    } else if (a.kind === 'select') {
+      const area = box(a.start, a.end, a.square);
+      if (area.w < 2 && area.h < 2) { if (a.mode === 'new') setSelection(null); }
+      else setSelection(combine(selectionRef.current, shapeMask(d.width, d.height, { kind: a.shape, box: area }), a.mode));
+    } else if (a.kind === 'lasso') {
+      if (a.points.length > 2) setSelection(combine(selectionRef.current, shapeMask(d.width, d.height, { kind: 'lasso', points: a.points }), a.mode));
+      else if (a.mode === 'new') setSelection(null);
+    } else if (a.kind === 'gradient') {
+      if (Math.hypot(a.end.x - a.start.x, a.end.y - a.start.y) < 2) return;
+      const surface = surfaceFor(true);
+      if (!surface) return;
+      if (surface.mask) {
+        const g = (context: CanvasRenderingContext2D) => {
+          const gradient = settings.gradient === 'linear' ? context.createLinearGradient(a.start.x, a.start.y, a.end.x, a.end.y) : context.createRadialGradient(a.start.x, a.start.y, 0, a.start.x, a.start.y, Math.hypot(a.end.x - a.start.x, a.end.y - a.start.y));
+          gradient.addColorStop(0, `rgba(255,255,255,${luminance(colors[0]) / 255})`);
+          gradient.addColorStop(1, `rgba(255,255,255,${settings.gradientToTransparent ? 0 : luminance(colors[1]) / 255})`);
+          context.globalCompositeOperation = 'copy'; context.fillStyle = gradient; context.fillRect(0, 0, d.width, d.height);
+        };
+        const rev = editSurface(store, surface.key, { x: 0, y: 0, w: d.width, h: d.height }, g);
+        if (rev !== null) commitSurface(surface.layer.id, true, rev, 'マスクのグラデーション', false);
+      } else {
+        const changed = gradientFill(store, surface.key, a.start, a.end, settings.gradient, [colors[0], settings.gradientToTransparent ? clearColor(colors[0]) : colors[1]], settings.fillOpacity, surface.offset, selectionRef.current);
+        if (changed) commitSurface(surface.layer.id, false, store.rev(surface.key)!, 'グラデーション', false);
+      }
+    } else if (a.kind === 'shape') {
+      let start = a.start, end = a.constrain ? (settings.shape === 'line' ? snapLine(a.start, a.end) : a.end) : a.end;
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 3) {
+        // A click makes a shape of a sensible default size centred on the point.
+        const side = Math.round(Math.min(d.width, d.height) / 4);
+        start = { x: a.start.x - side / 2, y: a.start.y - (settings.shape === 'line' ? 0 : side / 2) };
+        end = { x: a.start.x + side / 2, y: a.start.y + (settings.shape === 'line' ? 0 : side / 2) };
+      }
+      const line = settings.shape === 'line';
+      const area = box(start, end, a.constrain && !line);
+      const fill = !line && (settings.shapeFill || !settings.shapeStroke) ? colors[0] : null;
+      const shape: ShapeLayer = {
+        kind: 'shape', id: newLayerId(), name: uniqueName(d.layers, '図形'), visible: true, opacity: 100, blend: 'source-over',
+        x: Math.round(line ? start.x : area.x), y: Math.round(line ? start.y : area.y),
+        shape: { type: settings.shape, w: Math.round(line ? end.x - start.x : area.w), h: Math.round(line ? end.y - start.y : area.h), fill, stroke: line ? colors[0] : settings.shapeStroke ? (fill ? colors[1] : colors[0]) : null, strokeWidth: settings.strokeWidth, radius: settings.radius },
+      };
+      insertLayer(shape, '図形を追加');
+    } else if (a.kind === 'move') endGesture();
+    bumpOverlay();
+  }, [store, cache, adjuster, settings, colors, surfaceFor, commitSurface, insertLayer, setSelection, endGesture]);
+
+  const onTool = useCallback((phase: ToolPhase, p: ToolPointer | null) => {
+    const d = historyRef.current?.present;
+    if (!d) return;
+    if (phase === 'hover') { hover.current = p; if (tool === 'brush' || tool === 'eraser') bumpOverlay(); return; }
+    if (phase === 'up') { if (p) move(p); finish(); return; }
+    if (!p) return;
+    hover.current = p;
+    if (phase === 'down') begin(p, d); else move(p);
+  }, [tool, begin, move, finish]);
+
+  /** Selection outline, previews of the action in progress and the brush cursor, in document pixels. */
+  const overlay = useCallback((c: CanvasRenderingContext2D, px: number) => {
+    const d = historyRef.current?.present;
+    if (!d) return;
+    const dashed = (path: () => void) => {
+      c.save(); c.lineWidth = px; c.setLineDash([4 * px, 4 * px]);
+      c.beginPath(); path(); c.strokeStyle = '#000'; c.stroke();
+      c.lineDashOffset = 4 * px; c.strokeStyle = '#fff'; c.stroke(); c.restore();
+    };
+    const sel = selectionRef.current;
+    if (sel) { c.save(); c.imageSmoothingEnabled = sel.edges.width > d.width / px; c.drawImage(sel.edges, 0, 0, d.width, d.height); c.restore(); }
+    const layer = d.layers.find(l => l.id === d.selected);
+    if (layer && (tool === 'move' || (tool === 'text' && layer.kind === 'text'))) {
+      const b = cache.bounds(layer, store);
+      if (b) dashed(() => c.rect(b.x, b.y, b.w, b.h));
+    }
+    const a = action.current;
+    if (a?.kind === 'select') { const b = box(a.start, a.end, a.square); dashed(() => a.shape === 'rect' ? c.rect(b.x, b.y, b.w, b.h) : c.ellipse(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2)); }
+    else if (a?.kind === 'lasso') dashed(() => a.points.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
+    else if (a?.kind === 'gradient') {
+      dashed(() => { c.moveTo(a.start.x, a.start.y); c.lineTo(a.end.x, a.end.y); });
+      c.save(); c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = px;
+      for (const p of [a.start, a.end]) { c.beginPath(); c.arc(p.x, p.y, 4 * px, 0, Math.PI * 2); c.fill(); c.stroke(); }
+      c.restore();
+    } else if (a?.kind === 'shape') {
+      const line = settings.shape === 'line', end = a.constrain && line ? snapLine(a.start, a.end) : a.end;
+      const area = box(a.start, end, a.constrain && !line);
+      const r = renderShape({ type: settings.shape, w: line ? end.x - a.start.x : area.w, h: line ? end.y - a.start.y : area.h, fill: !line && (settings.shapeFill || !settings.shapeStroke) ? colors[0] : null, stroke: line || settings.shapeStroke ? (line || !settings.shapeFill ? colors[0] : colors[1]) : null, strokeWidth: settings.strokeWidth, radius: settings.radius });
+      c.save(); c.globalAlpha = 0.85; c.drawImage(r.canvas, (line ? a.start.x : area.x) - r.ox, (line ? a.start.y : area.y) - r.oy); c.restore();
+    }
+    const h = hover.current;
+    if (h && (tool === 'brush' || tool === 'eraser')) {
+      const options = settings[tool];
+      const radius = Math.max(options.size / 2, 2 * px);
+      c.save(); c.beginPath(); c.arc(h.x, h.y, radius, 0, Math.PI * 2);
+      c.lineWidth = 3 * px; c.strokeStyle = 'rgba(0,0,0,.55)'; c.stroke();
+      c.lineWidth = px; c.strokeStyle = '#fff'; c.stroke(); c.restore();
+    }
+  }, [tool, settings, colors, cache, store]);
 
   const aspectRatio = useCallback((id: string) => {
     if (!doc) return 0;
@@ -121,16 +490,130 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     return { ...d, geometry: { ...d.geometry, angle, crop: inner && { ...inner, x: inner.x + auto.x, y: inner.y + auto.y } } };
   }, '角度補正', true);
   const auto = () => {
-    if (!flat) return;
-    const suggestion = autoAdjust(histogram(flat).l);
-    setAdjust({ ...NEUTRAL, ...suggestion, temperature: doc!.adjust.temperature, tint: doc!.adjust.tint, vibrance: doc!.adjust.vibrance, saturation: doc!.adjust.saturation, vignette: doc!.adjust.vignette }, '自動補正');
+    if (!work.current || !doc) return;
+    const suggestion = autoAdjust(histogram(work.current).l);
+    setAdjust({ ...NEUTRAL, ...suggestion, temperature: doc.adjust.temperature, tint: doc.adjust.tint, vibrance: doc.adjust.vibrance, saturation: doc.adjust.saturation, vignette: doc.adjust.vignette }, '自動補正');
     onToast('明るさを自動で整えました。');
   };
 
-  // Save a thumbnail of the edited result when leaving the editor.
+  // Selection commands and edits that use it.
+  const selectionCommand = useCallback((command: 'all' | 'none' | 'invert') => {
+    const d = historyRef.current?.present;
+    if (!d) return;
+    setSelection(command === 'all' ? selectAll(d.width, d.height) : command === 'none' ? null : invertSelection(selectionRef.current, d.width, d.height));
+    bumpOverlay();
+  }, [setSelection]);
+  /** Fills the selection (or the whole surface) with a colour, or clears it when `color` is null. */
+  const fillSelection = useCallback((color: string | null, label: string) => {
+    const d = historyRef.current?.present;
+    const surface = surfaceFor(color !== null);
+    if (!d || !surface) return;
+    const sel = selectionRef.current;
+    const area = sel ? { x: sel.bounds.x - surface.offset.x, y: sel.bounds.y - surface.offset.y, w: sel.bounds.w, h: sel.bounds.h } : { x: 0, y: 0, w: d.width, h: d.height };
+    const paint = surface.mask ? (color === null ? null : luminance(color) < 128 ? null : '#ffffff') : color;
+    const rev = editSurface(store, surface.key, area, context => {
+      const layer = makeCanvas(d.width, d.height), c = layer.getContext('2d')!;
+      c.fillStyle = paint || '#000'; c.fillRect(0, 0, d.width, d.height);
+      if (sel) { c.globalCompositeOperation = 'destination-in'; c.drawImage(sel.mask, 0, 0); }
+      if (!paint) context.globalCompositeOperation = 'destination-out';
+      context.drawImage(layer, -surface.offset.x, -surface.offset.y);
+    });
+    if (rev !== null) commitSurface(surface.layer.id, surface.mask, rev, label, false);
+  }, [store, surfaceFor, commitSurface]);
+  /** Copies the selected pixels of the current raster layer (the whole layer without a selection). */
+  const copy = useCallback(() => {
+    const d = historyRef.current?.present;
+    const layer = d?.layers.find(l => l.id === d.selected);
+    if (!d || !layer) return false;
+    const source = cache.source(layer, store);
+    if (!source) return false;
+    const sel = selectionRef.current;
+    const result = makeCanvas(d.width, d.height), c = result.getContext('2d')!;
+    c.drawImage(source.canvas, source.x, source.y);
+    if (sel) { c.globalCompositeOperation = 'destination-in'; c.drawImage(sel.mask, 0, 0); }
+    const bounds = sel ? sel.bounds : { x: Math.max(0, source.x), y: Math.max(0, source.y), w: Math.min(d.width, source.x + source.canvas.width) - Math.max(0, source.x), h: Math.min(d.height, source.y + source.canvas.height) - Math.max(0, source.y) };
+    if (bounds.w <= 0 || bounds.h <= 0) return false;
+    clipboard.current = { canvas: result, bounds };
+    // Also offer the pixels to other apps.
+    const out = makeCanvas(bounds.w, bounds.h);
+    out.getContext('2d')!.drawImage(result, -bounds.x, -bounds.y);
+    void toBlob(out, 'image/png').then(blob => { clipboardStamp.current = blob.size; return navigator.clipboard?.write?.([new ClipboardItem({ 'image/png': blob })]); }).catch(() => {});
+    return true;
+  }, [cache, store]);
+  const pasteInternal = useCallback(() => {
+    const d = historyRef.current?.present, clip = clipboard.current;
+    if (!d || !clip) return;
+    insertLayer(newRaster(d, uniqueName(d.layers, 'ペースト'), c => c.drawImage(clip.canvas, 0, 0)), 'ペースト');
+  }, [insertLayer, newRaster]);
+  const addImage = useCallback(async (file: File) => {
+    const d = historyRef.current?.present;
+    if (!d) return;
+    try {
+      const image = await decode(file);
+      const scale = Math.min(1, d.width / image.width, d.height / image.height);
+      const w = Math.round(image.width * scale), h = Math.round(image.height * scale);
+      insertLayer(newRaster(d, file.name.replace(/\.[^.]+$/, '') || uniqueName(d.layers, '画像'), c => c.drawImage(image, Math.round((d.width - w) / 2), Math.round((d.height - h) / 2), w, h)), '画像を追加');
+      image.close();
+      setTab('layers');
+    } catch (e) { onToast((e as Error).message); }
+  }, [insertLayer, newRaster, onToast]);
+
+  const layerActions: LayerActions = useMemo(() => ({
+    select: selectLayer,
+    update: updateLayer,
+    commit: endGesture,
+    rename: (id, name) => updateLayer(id, { name }, '名前を変更'),
+    add: () => { const d = historyRef.current?.present; if (d) insertLayer(newRaster(d), '新規レイヤー'); },
+    importImage: () => void pickImages().then(files => files[0] && addImage(files[0])),
+    duplicate: () => {
+      const d = historyRef.current?.present;
+      const layer = d?.layers.find(l => l.id === d.selected);
+      if (!d || !layer) return;
+      const id = newLayerId();
+      let copyLayer = { ...layer, id, name: `${layer.name} のコピー` } as Layer;
+      if (layer.kind === 'raster') copyLayer = { ...copyLayer, rev: store.create(id, d.width, d.height, store.get(layer.id)) } as Layer;
+      if (layer.mask) copyLayer = { ...copyLayer, mask: { ...layer.mask, rev: store.create(maskKey(id), d.width, d.height, store.get(maskKey(layer.id))) } };
+      insertLayer(copyLayer, 'レイヤーを複製');
+    },
+    remove: () => change(d => {
+      if (d.layers.length < 2) return d;
+      const index = d.layers.findIndex(l => l.id === d.selected);
+      const layers = d.layers.filter(l => l.id !== d.selected);
+      return { ...d, layers, selected: layers[Math.max(0, index - 1)].id };
+    }, 'レイヤーを削除'),
+    move: direction => change(d => {
+      const index = d.layers.findIndex(l => l.id === d.selected), to = index + direction;
+      if (to < 0 || to >= d.layers.length) return d;
+      const layers = [...d.layers];
+      [layers[index], layers[to]] = [layers[to], layers[index]];
+      return { ...d, layers };
+    }, direction > 0 ? 'レイヤーを上へ' : 'レイヤーを下へ'),
+    addMask: () => {
+      const d = historyRef.current?.present;
+      if (!d) return;
+      const key = maskKey(d.selected);
+      const sel = selectionRef.current;
+      const rev = sel ? store.create(key, d.width, d.height, sel.mask) : createMask(store, key, d.width, d.height);
+      updateLayer(d.selected, { mask: { rev, enabled: true } }, sel ? '選択範囲からマスク' : 'マスクを追加');
+      setTarget('mask');
+    },
+    removeMask: () => { const d = historyRef.current?.present; if (d) updateLayer(d.selected, { mask: undefined }, 'マスクを削除'); setTarget('layer'); },
+    rasterize: () => {
+      const d = historyRef.current?.present;
+      const layer = d?.layers.find(l => l.id === d.selected);
+      const source = layer && cache.source(layer, store);
+      if (!d || !layer || !source) return;
+      const raster = newRaster(d, layer.name, c => c.drawImage(source.canvas, source.x, source.y));
+      const mask = layer.mask && { ...layer.mask, rev: store.create(maskKey(raster.id), d.width, d.height, store.get(maskKey(layer.id))) };
+      change(doc => ({ ...doc, selected: raster.id, layers: doc.layers.map(l => l.id === layer.id ? { ...raster, visible: l.visible, opacity: l.opacity, blend: l.blend, mask } : l) }), 'ラスタライズ');
+    },
+  }), [selectLayer, updateLayer, endGesture, insertLayer, newRaster, addImage, change, store, cache]);
+
+  // Save a thumbnail of the edited result and any unsaved pixels when leaving the editor.
   const latest = useRef<{ doc?: Doc; image?: HTMLCanvasElement }>({});
   latest.current = { doc, image: version ? adjuster.canvas : undefined };
   useEffect(() => () => {
+    savePixels();
     const { doc: last, image } = latest.current;
     if (!last || !image) return;
     const size = outputSize(last.geometry, last.width, last.height);
@@ -138,36 +621,80 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const target = makeCanvas(Math.max(1, Math.round(size.width * k)), Math.max(1, Math.round(size.height * k)));
     drawGeometry(target.getContext('2d')!, image, last, 0, 0, k, 'output');
     void createImageBitmap(target).then(bitmap => thumbnail(bitmap).finally(() => bitmap.close())).then(blob => onUpdate({ ...projectRef.current, thumbnail: blob, edits: savedEdits(last), edited: Date.now() })).catch(() => {});
-  }, [adjuster, onUpdate]);
+  }, [adjuster, onUpdate, savePixels]);
+
+  useEffect(() => {
+    const paste = (event: ClipboardEvent) => {
+      if ((event.target as HTMLElement)?.closest?.('input, textarea')) return;
+      const file = [...(event.clipboardData?.files || [])].find(isImageFile);
+      const clip = clipboard.current;
+      event.preventDefault();
+      // Our own copy comes back from the system clipboard too; paste it in place rather than centred.
+      if (file && !(clip && file.type === 'image/png' && file.size && clipboardStamp.current === file.size)) void addImage(file);
+      else if (clip) pasteInternal();
+    };
+    window.addEventListener('paste', paste);
+    return () => window.removeEventListener('paste', paste);
+  }, [addImage, pasteInternal]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement)?.closest('input:not([type=range]), select, textarea, dialog')) return;
+      if ((event.target as HTMLElement)?.closest('input:not([type=range]):not([type=color]), select, textarea, dialog')) return;
       const command = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
-      if (command && key === 'z') { event.preventDefault(); setHistory(h => h && (event.shiftKey ? redo(h) : undo(h))); }
-      else if (command && key === 'y') { event.preventDefault(); setHistory(h => h && redo(h)); }
+      const h = historyRef.current;
+      if (command && key === 'z') { event.preventDefault(); if (h && !action.current) apply(event.shiftKey ? redo(h) : undo(h)); }
+      else if (command && key === 'y') { event.preventDefault(); if (h && !action.current) apply(redo(h)); }
       else if (command && (key === '=' || key === '+')) { event.preventDefault(); if (view) zoomTo(stepZoom(view.scale, 1)); }
       else if (command && key === '-') { event.preventDefault(); if (view) zoomTo(stepZoom(view.scale, -1)); }
       else if (command && key === '0') { event.preventDefault(); fit(); }
       else if (command && key === '1') { event.preventDefault(); zoomTo(1); }
       else if (command && event.shiftKey && key === 'e') { event.preventDefault(); setExporting(true); }
+      else if (command && event.shiftKey && key === 'i') { event.preventDefault(); selectionCommand('invert'); }
+      else if (command && key === 'a') { event.preventDefault(); selectionCommand('all'); }
+      else if (command && key === 'd') { event.preventDefault(); selectionCommand('none'); }
+      else if (command && key === 'j') {
+        event.preventDefault();
+        if (selectionRef.current && copy()) pasteInternal(); else layerActions.duplicate();
+      }
+      else if (command && key === 'c') { event.preventDefault(); if (copy()) onToast('コピーしました。'); }
+      else if (command && key === 'x') { event.preventDefault(); if (copy()) fillSelection(null, 'カット'); }
+      else if (command && key === 'backspace') { event.preventDefault(); fillSelection(colors[1], '背景色で塗りつぶし'); }
       else if (command) return;
+      else if (event.altKey && key === 'backspace') { event.preventDefault(); fillSelection(colors[0], '描画色で塗りつぶし'); }
+      else if (key === 'delete' || key === 'backspace') { event.preventDefault(); if (selectionRef.current) fillSelection(null, '消去'); else onToast('消去する範囲を選択してください。'); }
       else if (key === ' ') { event.preventDefault(); setSpace(true); }
       else if (key === '\\') setBefore(true);
-      else if (key === 'h') setTool('hand');
-      else if (key === 'z') setTool('zoom');
-      else if (key === 'c') setTool(tool === 'crop' ? 'hand' : 'crop');
-      else if ((key === 'enter' || key === 'escape') && tool === 'crop') setTool('hand');
+      else if (key === 'escape') { if (tool === 'crop') setTool('hand'); else selectionCommand('none'); }
+      else if (key === 'enter' && tool === 'crop') setTool('hand');
+      else if (key.startsWith('arrow') && tool === 'move' && h) {
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1, layer = h.present.layers.find(l => l.id === h.present.selected)!;
+        const dx = key === 'arrowleft' ? -step : key === 'arrowright' ? step : 0, dy = key === 'arrowup' ? -step : key === 'arrowdown' ? step : 0;
+        updateLayer(layer.id, { x: layer.x + dx, y: layer.y + dy }, '移動', true);
+      }
+      else if (key === '[' || key === ']') {
+        const which = tool === 'eraser' ? 'eraser' : 'brush', size = settings[which].size;
+        setSettings({ [which]: { ...settings[which], size: Math.max(1, Math.min(500, Math.round(key === ']' ? size * 1.2 + 1 : size / 1.2 - 1))) } });
+        bumpOverlay();
+      }
+      else if (key === 'x') setColors(([a, b]) => [b, a]);
+      else if (key === 'd') setColors(['#000000', '#ffffff']);
+      else if (event.shiftKey && key === 'n') layerActions.add();
+      else {
+        const next = ({ v: 'move', l: 'lasso', w: 'wand', b: 'brush', e: 'eraser', i: 'eyedropper', t: 'text', u: 'shape', h: 'hand', z: 'zoom' } as Record<string, Tool>)[key]
+          ?? (key === 'm' ? (tool === 'marquee' || event.shiftKey ? (tool === 'ellipse' ? 'marquee' : 'ellipse') : 'marquee') : undefined)
+          ?? (key === 'g' ? (tool === 'fill' || event.shiftKey ? (tool === 'gradient' ? 'fill' : 'gradient') : 'fill') : undefined)
+          ?? (key === 'c' ? (tool === 'crop' ? 'hand' : 'crop') : undefined);
+        if (next) setTool(next);
+      }
     };
-    const up = (event: KeyboardEvent) => { if (event.key === ' ') setSpace(false); if (event.key === '\\') setBefore(false); };
+    const up = (event: KeyboardEvent) => { if (event.key === ' ') setSpace(false); if (event.key === '\\') setBefore(false); if (event.key === 'Shift' || event.key === 'Alt') bumpOverlay(); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [view, zoomTo, fit, tool, setTool]);
-
+  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast]);
   if (error) return <div className="app editor"><div className="editor-error"><h2>画像を開けませんでした</h2><p>{error}</p><button type="button" className="btn" onClick={onClose}><ArrowLeft size={16}/>ライブラリに戻る</button></div></div>;
-  if (!doc || !bitmaps || !history || !output) return <div className="app editor"><div className="editor-loading"><span className="spinner" aria-hidden="true"/>読み込み中…</div></div>;
+  if (!doc || !history || !output || !selected) return <div className="app editor"><div className="editor-loading"><span className="spinner" aria-hidden="true"/>読み込み中…</div></div>;
 
-  const selected = doc.layers.find(layer => layer.id === doc.selected) || doc.layers[0];
   const shown = before ? { ...doc, adjust: { ...doc.adjust, vignette: 0 } } : doc;
   return <div className="app editor" data-tool={tool}>
     <header className="editor-bar">
@@ -176,31 +703,31 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         <div className="doc-title"><strong>{project.name}</strong><span className="num">{output.width} × {output.height}</span></div>
       </div>
       <div className="bar-group">
-        <IconButton icon={Undo2} label="元に戻す" shortcut={`${mod}+Z`} disabled={!history.past.length} onClick={() => setHistory(undo(history))}/>
-        <IconButton icon={Redo2} label="やり直す" shortcut={`${mod}+⇧+Z`} disabled={!history.future.length} onClick={() => setHistory(redo(history))}/>
+        <IconButton icon={Undo2} label="元に戻す" shortcut={`${mod}+Z`} disabled={!history.past.length} onClick={() => apply(undo(history))}/>
+        <IconButton icon={Redo2} label="やり直す" shortcut={`${mod}+⇧+Z`} disabled={!history.future.length} onClick={() => apply(redo(history))}/>
+        <span className="zoom-group">
         <span className="bar-sep" aria-hidden="true"/>
         <IconButton icon={Minus} label="縮小" shortcut={`${mod}+−`} onClick={() => view && zoomTo(stepZoom(view.scale, -1))}/>
         <button type="button" className="zoom-readout num" title="画面に合わせる" onClick={fit}>{view ? formatZoom(view.scale) : '—'}</button>
         <IconButton icon={Plus} label="拡大" shortcut={`${mod}+=`} onClick={() => view && zoomTo(stepZoom(view.scale, 1))}/>
         <IconButton icon={Maximize} label="画面に合わせる" shortcut={`${mod}+0`} onClick={fit}/>
+        </span>
       </div>
       <div className="bar-group end">
         <button type="button" className={`btn compare${before ? ' on' : ''}`} title="押している間、補正前を表示（\\ キー）" aria-pressed={before}
-          onPointerDown={() => setBefore(true)} onPointerUp={() => setBefore(false)} onPointerLeave={() => setBefore(false)}><SplitSquareHorizontal size={15} aria-hidden="true"/>補正前</button>
+          onPointerDown={() => setBefore(true)} onPointerUp={() => setBefore(false)} onPointerLeave={() => setBefore(false)}><SplitSquareHorizontal size={15} aria-hidden="true"/><span className="btn-label">補正前</span></button>
         <IconButton icon={Settings2} label="設定" onClick={onSettings}/>
         <button type="button" className="btn primary" title={`書き出し (${mod}+⇧+E)`} onClick={() => setExporting(true)}><Download size={16} aria-hidden="true"/>書き出し</button>
       </div>
     </header>
     <div className="editor-body">
-      <nav className="tool-rail" aria-label="ツール">
-        <IconButton icon={Hand} label="手のひら" shortcut="H" active={tool === 'hand'} onClick={() => setTool('hand')}/>
-        <IconButton icon={ZoomIn} label="ズーム（Alt で縮小）" shortcut="Z" active={tool === 'zoom'} onClick={() => setTool('zoom')}/>
-        <IconButton icon={Crop} label="切り抜きと回転" shortcut="C" active={tool === 'crop'} onClick={() => setTool(tool === 'crop' ? 'hand' : 'crop')}/>
-      </nav>
-      <div className="stage-wrap">
-        <Stage doc={shown} image={before ? flat : (version ? adjuster.canvas : null)} imageVersion={version + (before ? 0.5 : 0)} view={view} tool={tool} spaceHeld={space} checkerboard={prefs.checkerboard}
-          aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport}/>
+      <ToolRail tool={tool} onTool={setTool} colors={colors} onColors={setColors}/>
+      <div className="stage-wrap" onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
+        onDrop={event => { const file = [...event.dataTransfer.files].find(isImageFile); if (file) { event.preventDefault(); void addImage(file); } }}>
+        <Stage doc={shown} image={before ? work.current : (version ? adjuster.canvas : null)} imageVersion={version + (before ? 0.5 : 0)} view={view} tool={tool} spaceHeld={space} checkerboard={prefs.checkerboard}
+          aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
         {before && <div className="stage-badge">補正前</div>}
+        {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand}/>}
         {tool === 'crop' && <div className="crop-bar" role="toolbar" aria-label="切り抜き">
           <label className="select"><span>比率</span><select value={aspectId} onChange={e => chooseAspect(e.target.value)}>{ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
           <div className="crop-angle"><Slider label="角度" value={doc.geometry.angle} min={-MAX_ANGLE} max={MAX_ANGLE} step={0.1} format={v => `${v.toFixed(1)}°`} centered onChange={straighten} onCommit={endGesture} onReset={() => straighten(0)}/></div>
@@ -214,18 +741,20 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         {tool !== 'crop' && <div className="status-bar num" aria-live="off">
           <span>{view ? formatZoom(view.scale) : ''}</span>
           <span>{cursor ? `X ${cursor.x}  Y ${cursor.y}` : `${output.width} × ${output.height} px`}</span>
+          {selection && <span>選択 {selection.bounds.w} × {selection.bounds.h}</span>}
+          <span>{selected.name}{target === 'mask' ? '（マスク）' : ''}</span>
         </div>}
       </div>
       <aside className="inspector" aria-label="インスペクター">
         <div className="inspector-tabs" role="tablist">
-          {([['adjust', '調整', SlidersHorizontal], ['layers', 'レイヤー', Layers], ['history', '履歴', HistoryIcon], ['info', '情報', Info]] as const).map(([id, label, Icon]) =>
+          {([['layers', 'レイヤー', Layers], ['adjust', '調整', SlidersHorizontal], ['history', '履歴', HistoryIcon], ['info', '情報', Info]] as const).map(([id, label, Icon]) =>
             <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} title={label} onClick={() => setTab(id)}><Icon size={15} aria-hidden="true"/><span>{label}</span></button>)}
         </div>
         <div className="inspector-body">
           {tab === 'adjust' && <AdjustPanel adjust={doc.adjust} accelerated={adjuster.accelerated} onChange={setAdjust} onCommit={endGesture} onAuto={auto} onReset={() => setAdjust(NEUTRAL, '調整をリセット')}/>}
-          {tab === 'layers' && <LayersPanel doc={doc} bitmaps={bitmaps} selected={selected} onSelect={id => change(d => ({ ...d, selected: id }), 'レイヤーを選択')} onUpdate={updateLayer} onCommit={endGesture}/>}
-          {tab === 'history' && <HistoryPanel history={history} onJump={index => setHistory(jump(history, index))}/>}
-          {tab === 'info' && <InfoPanel project={project} output={output} source={version ? adjuster.canvas : flat} version={version}/>}
+          {tab === 'layers' && <LayersPanel doc={doc} store={store} cache={cache} selected={selected} target={target} onTarget={setTarget} actions={layerActions} editText={editText}/>}
+          {tab === 'history' && <HistoryPanel history={history} onJump={index => apply(jump(history, index))}/>}
+          {tab === 'info' && <InfoPanel project={project} output={output} source={version ? adjuster.canvas : work.current} version={version}/>}
         </div>
       </aside>
     </div>
@@ -233,90 +762,9 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   </div>;
 }
 
-const GROUPS = [['light', 'ライト'], ['color', 'カラー'], ['effects', '効果']] as const;
-function AdjustPanel({ adjust, accelerated, onChange, onCommit, onAuto, onReset }: { adjust: Adjustments; accelerated: boolean; onChange: (patch: Partial<Adjustments>, label: string, gesture?: boolean) => void; onCommit: () => void; onAuto: () => void; onReset: () => void }) {
-  const changed = CONTROLS.some(c => adjust[c.key] !== 0);
-  return <div className="panel">
-    <div className="panel-actions">
-      <button type="button" className="btn" onClick={onAuto}><Wand2 size={15} aria-hidden="true"/>自動補正</button>
-      <button type="button" className="btn ghost" disabled={!changed} onClick={onReset}>すべてリセット</button>
-    </div>
-    {GROUPS.map(([group, title]) => <section key={group} className="adjust-group" aria-label={title}>
-      <h3>{title}</h3>
-      {CONTROLS.filter(c => c.group === group).map(c => <Slider key={c.key} label={c.label} value={adjust[c.key]} min={c.min} max={c.max} step={c.step} centered
-        format={c.key === 'exposure' ? v => `${v > 0 ? '+' : ''}${v.toFixed(2)}` : v => `${v > 0 ? '+' : ''}${v}`}
-        onChange={value => onChange({ [c.key]: value }, c.label, true)} onCommit={onCommit} onReset={() => onChange({ [c.key]: 0 }, c.label)}/>)}
-    </section>)}
-    <p className="panel-note">スライダーをダブルクリックで元に戻せます。<Kbd>\</Kbd> を押している間は補正前を表示します。{accelerated ? '' : ' この環境では GPU を使えないため、表示が遅くなることがあります。'}</p>
-  </div>;
-}
-
-function LayerThumb({ bitmap }: { bitmap?: ImageBitmap }) {
-  const ref = useCallback((canvas: HTMLCanvasElement | null) => {
-    if (!canvas || !bitmap) return;
-    const ratio = Math.min(1, 80 / Math.max(bitmap.width, bitmap.height));
-    canvas.width = Math.max(1, Math.round(bitmap.width * ratio)); canvas.height = Math.max(1, Math.round(bitmap.height * ratio));
-    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  }, [bitmap]);
-  return <canvas ref={ref} className="layer-thumb" aria-hidden="true"/>;
-}
-
-function LayersPanel({ doc, bitmaps, selected, onSelect, onUpdate, onCommit }: { doc: Doc; bitmaps: Bitmaps; selected: Layer; onSelect: (id: string) => void; onUpdate: (id: string, patch: Partial<Layer>, label: string, gesture?: boolean) => void; onCommit: () => void }) {
-  return <div className="panel">
-    <div className="panel-section">
-      <label className="field"><span>描画モード</span>
-        <select value={selected.blend} onChange={e => onUpdate(selected.id, { blend: e.target.value as Layer['blend'] }, '描画モード')}>{BLEND_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</select>
-      </label>
-      <Slider label="不透明度" value={selected.opacity} min={0} max={100} unit="%" onChange={opacity => onUpdate(selected.id, { opacity }, '不透明度', true)} onCommit={onCommit} onReset={() => onUpdate(selected.id, { opacity: 100 }, '不透明度')}/>
-    </div>
-    <ul className="layer-list" aria-label="レイヤー">
-      {[...doc.layers].reverse().map(layer => <li key={layer.id} className={layer.id === selected.id ? 'selected' : ''}>
-        <button type="button" className="layer-main" aria-pressed={layer.id === selected.id} onClick={() => layer.id !== selected.id && onSelect(layer.id)}>
-          <LayerThumb bitmap={bitmaps.get(layer.id)}/><span className="layer-name">{layer.name}</span>{layer.opacity < 100 && <span className="chip num">{layer.opacity}%</span>}
-        </button>
-        <IconButton icon={layer.visible ? Eye : EyeOff} label={layer.visible ? '非表示にする' : '表示する'} size={16} className={layer.visible ? '' : 'dim'} onClick={() => onUpdate(layer.id, { visible: !layer.visible }, layer.visible ? 'レイヤーを非表示' : 'レイヤーを表示')}/>
-      </li>)}
-    </ul>
-  </div>;
-}
-
-function HistoryPanel({ history, onJump }: { history: History<Doc>; onJump: (index: number) => void }) {
-  const list = entries(history);
-  return <div className="panel"><ol className="history-list" aria-label="編集履歴">
-    {list.map((entry, index) => <li key={index}><button type="button" className={`${entry.current ? 'current' : ''}${entry.future ? ' future' : ''}`} aria-current={entry.current ? 'step' : undefined} onClick={() => onJump(index)}>
-      <span className="history-dot" aria-hidden="true"/>{entry.label}
-    </button></li>)}
-  </ol><p className="panel-note">履歴は回数無制限で、任意の時点に戻れます。編集内容は自動で保存されます。</p></div>;
-}
-
-function InfoPanel({ project, output, source, version }: { project: Project; output: { width: number; height: number }; source: HTMLCanvasElement | null; version: number }) {
-  const [data, setData] = useState<Histogram | null>(null);
-  useEffect(() => { if (!source) return; const timer = setTimeout(() => setData(histogram(source)), 120); return () => clearTimeout(timer); }, [source, version]);
-  const megapixels = (output.width * output.height / 1e6).toFixed(1);
-  const format = project.type.replace('image/', '').toUpperCase() || '—';
-  return <div className="panel">
-    {data && <HistogramChart data={data}/>}
-    <dl className="info-list">
-      <div><dt>出力サイズ</dt><dd className="num">{output.width} × {output.height} px</dd></div>
-      <div><dt>画素数</dt><dd className="num">{megapixels} MP</dd></div>
-      <div><dt>元のサイズ</dt><dd className="num">{project.width} × {project.height} px</dd></div>
-      <div><dt>形式</dt><dd>{format}</dd></div>
-      <div><dt>ファイルサイズ</dt><dd className="num">{formatBytes(project.size)}</dd></div>
-      <div><dt>追加日</dt><dd className="num">{new Date(project.added).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })}</dd></div>
-    </dl>
-  </div>;
-}
-
-function HistogramChart({ data }: { data: Histogram }) {
-  const path = (channel: Uint32Array) => {
-    let d = 'M0 100';
-    for (let i = 0; i < 256; i++) d += ` L${(i / 255 * 256).toFixed(1)} ${(100 - Math.min(1, channel[i] / data.max) * 100).toFixed(1)}`;
-    return `${d} L256 100 Z`;
-  };
-  return <figure className="histogram" aria-label="ヒストグラム">
-    <svg viewBox="0 0 256 100" preserveAspectRatio="none" aria-hidden="true">
-      <path d={path(data.l)} className="h-l"/><path d={path(data.r)} className="h-r"/><path d={path(data.g)} className="h-g"/><path d={path(data.b)} className="h-b"/>
-    </svg>
-    <figcaption>ヒストグラム（調整後）</figcaption>
-  </figure>;
+/** A layer mask starts fully white: everything visible. */
+function createMask(store: PixelStore, key: string, width: number, height: number, source?: CanvasImageSource): number {
+  const rev = store.create(key, width, height, source);
+  if (!source) { const c = store.context(key); c.fillStyle = '#fff'; c.fillRect(0, 0, width, height); }
+  return rev;
 }

@@ -112,3 +112,31 @@ export function flip(g, axis, width, height) {
 
 /** @param {Geometry} g */
 export function isIdentity(g) { return !g.quarter && !g.flipH && !g.flipV && !g.angle && !g.crop; }
+
+/** 2D affine matrices in canvas order [a, b, c, d, e, f]: x' = a·x + c·y + e, y' = b·x + d·y + f.
+ * @typedef {[number, number, number, number, number, number]} Matrix */
+
+/** @param {Matrix} m @param {Matrix} n @returns {Matrix} m·n (apply n first) */
+export function multiply(m, n) {
+  return [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+}
+/** @param {Matrix} m @returns {Matrix} */
+export function invert(m) {
+  const det = m[0] * m[3] - m[1] * m[2];
+  return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
+}
+/** @param {Matrix} m @param {number} x @param {number} y */
+export function apply(m, x, y) { return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] }; }
+const translate = (/** @type {number} */ x, /** @type {number} */ y) => /** @type {Matrix} */ ([1, 0, 0, 1, x, y]);
+const scaleBy = (/** @type {number} */ x, /** @type {number} */ y) => /** @type {Matrix} */ ([x, 0, 0, y, 0, 0]);
+const rotate = (/** @type {number} */ r) => /** @type {Matrix} */ ([Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0]);
+
+/** Maps source pixels to the output (mode 'output') or to the rotated frame (mode 'frame').
+ * @param {Geometry} g @param {number} width @param {number} height @param {'output'|'frame'} mode @returns {Matrix} */
+export function sourceMatrix(g, width, height, mode) {
+  const frame = orientedSize(width, height, g.quarter);
+  const crop = effectiveCrop(g, width, height);
+  let m = mode === 'output' ? translate(-crop.x, -crop.y) : translate(0, 0);
+  for (const step of [translate(frame.width / 2, frame.height / 2), rotate(g.angle * Math.PI / 180), scaleBy(g.flipH ? -1 : 1, g.flipV ? -1 : 1), rotate(g.quarter * Math.PI / 2), translate(-width / 2, -height / 2)]) m = multiply(m, step);
+  return m;
+}
