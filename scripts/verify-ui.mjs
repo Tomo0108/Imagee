@@ -217,6 +217,23 @@ try {
   await page.getByRole('tab', { name: '履歴' }).click();
   const colourLabels = await page.locator('.history-list li').allTextContents();
   assert.ok(colourLabels.includes('調整レイヤーを追加') && colourLabels.includes('LUT'), `colour history: ${colourLabels}`);
+
+  // Spot healing removes part of the red stroke; the clone stamp copies the rest elsewhere.
+  await page.keyboard.press('Control+z');
+  await page.getByRole('tab', { name: 'レイヤー' }).click();
+  await page.locator('.layer-list li', { hasText: '背景' }).locator('.layer-main').click();
+  await page.keyboard.press('j');
+  await page.getByRole('slider', { name: 'サイズ' }).fill('60');
+  await drag([cx - 140, cy - 150], [cx - 60, cy - 150], 8);
+  await page.waitForTimeout(300);
+  assert.ok(!isRed(await pixel(cx - 100, cy - 150)), `healing removes the stroke, got ${await pixel(cx - 100, cy - 150)}`);
+  await page.keyboard.press('s');
+  await page.keyboard.down('Alt');
+  await page.mouse.click(cx + 100, cy - 150);
+  await page.keyboard.up('Alt');
+  await drag([cx + 100, cy + 250], [cx + 110, cy + 250], 3);
+  assert.ok(isRed(await pixel(cx + 104, cy + 250)), 'clone stamp copies the source');
+  await page.screenshot({ path: `${out}/editor-heal-clone-dark.png` });
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();

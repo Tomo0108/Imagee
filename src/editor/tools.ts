@@ -1,12 +1,15 @@
 import { canvas } from '../imaging';
 import { dabsAlong, type Sample } from '../lib/brush.mjs';
 import { floodMask } from '../lib/flood.mjs';
+import { heal } from '../lib/heal.mjs';
 import { union, type Box, type PixelStore } from './pixels';
 import type { Selection } from './selection';
 
 export interface BrushOptions { size: number; hardness: number; opacity: number; pressureSize: boolean }
 /** What a stroke does to its surface. 'hide' / 'reveal' are used on layer masks. */
-export type StrokeEffect = 'paint' | 'erase' | 'hide' | 'reveal';
+export type StrokeEffect = 'paint' | 'erase' | 'hide' | 'reveal' | 'clone';
+/** Where a clone stroke copies from, drawn at (x, y) in surface pixels. 'original' is the surface as it was when the stroke began. */
+export interface CloneSource { image: CanvasImageSource | 'original'; x: number; y: number }
 
 /** A brush or eraser stroke in progress. Dabs go into a stroke buffer at full strength and the buffer is laid
  *  over a copy of the surface taken at the start, so overlapping dabs never build up past the chosen opacity. */
@@ -22,7 +25,8 @@ export class Stroke {
   private clear: string;
 
   constructor(private store: PixelStore, private key: string, private options: BrushOptions, private color: string, private effect: StrokeEffect,
-    /** Surface position in document pixels (raster layers can be moved). */ private offset: { x: number; y: number }, private selection: Selection | null) {
+    /** Surface position in document pixels (raster layers can be moved). */ private offset: { x: number; y: number }, private selection: Selection | null,
+    private source?: CloneSource) {
     const surface = store.get(key)!;
     this.buffer = canvas(surface.width, surface.height);
     this.bufferContext = this.buffer.getContext('2d')!;
@@ -61,6 +65,13 @@ export class Stroke {
     s.clearRect(area.x, area.y, area.w, area.h);
     s.globalCompositeOperation = 'source-over';
     s.drawImage(this.buffer, area.x, area.y, area.w, area.h, area.x, area.y, area.w, area.h);
+    if (this.source) {
+      // The brush shape becomes a window onto the clone source.
+      s.save(); s.beginPath(); s.rect(area.x, area.y, area.w, area.h); s.clip();
+      s.globalCompositeOperation = 'source-in';
+      s.drawImage(this.source.image === 'original' ? this.original : this.source.image, this.source.x, this.source.y);
+      s.restore();
+    }
     if (this.selection) { s.globalCompositeOperation = 'destination-in'; s.drawImage(this.selection.mask, -this.offset.x, -this.offset.y); s.globalCompositeOperation = 'source-over'; }
     target.save();
     target.clearRect(area.x, area.y, area.w, area.h);
@@ -152,4 +163,48 @@ export function gradientFill(store: PixelStore, key: string, from: { x: number; 
   if (selection) { c.globalCompositeOperation = 'destination-in'; c.drawImage(selection.mask, -offset.x, -offset.y); }
   const rev = editSurface(store, key, box, target => { target.globalAlpha = opacity / 100; target.drawImage(layer, 0, 0); });
   return rev === null ? null : { x: box.x + offset.x, y: box.y + offset.y, w: box.w, h: box.h };
+}
+
+/** The area painted with the spot healing brush, kept as a soft mask in surface pixels until the stroke ends. */
+export class HealMask {
+  readonly canvas: HTMLCanvasElement;
+  private context: CanvasRenderingContext2D;
+  private last: Sample | null = null;
+  private carry = 0;
+  bounds: Box | null = null;
+  constructor(width: number, height: number, private size: number, private hardness: number, readonly offset: { x: number; y: number }) {
+    this.canvas = canvas(width, height);
+    this.context = this.canvas.getContext('2d', { willReadFrequently: true })!;
+  }
+  add(point: Sample) {
+    const p = { x: point.x - this.offset.x, y: point.y - this.offset.y, pressure: 1 };
+    const dabs = this.last ? dabsAlong(this.last, p, this.size, 0.15, this.carry, false) : { dabs: [{ ...p, size: this.size }], carry: 0 };
+    this.carry = dabs.carry; this.last = p;
+    const c = this.context;
+    for (const dab of dabs.dabs) {
+      const r = Math.max(1, dab.size / 2);
+      const gradient = c.createRadialGradient(dab.x, dab.y, Math.min(r * this.hardness / 100, r - 0.5), dab.x, dab.y, r);
+      gradient.addColorStop(0, '#fff'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = gradient; c.beginPath(); c.arc(dab.x, dab.y, r, 0, Math.PI * 2); c.fill();
+      this.bounds = union(this.bounds, { x: dab.x - r - 1, y: dab.y - r - 1, w: r * 2 + 2, h: r * 2 + 2 });
+    }
+  }
+}
+
+/** Heals the masked area of a surface as one undoable step. Returns the new revision, or null. */
+export function healSurface(store: PixelStore, key: string, mask: HealMask): number | null {
+  const surface = store.get(key)!;
+  if (!mask.bounds) return null;
+  const b = mask.bounds, extent = Math.max(b.w, b.h);
+  // Leave room around the area for source candidates up to ~2.3 × its size away.
+  const x = Math.max(0, Math.floor(b.x - extent * 2.6)), y = Math.max(0, Math.floor(b.y - extent * 2.6));
+  const box = { x, y, w: Math.min(surface.width, Math.ceil(b.x + b.w + extent * 2.6)) - x, h: Math.min(surface.height, Math.ceil(b.y + b.h + extent * 2.6)) - y };
+  if (box.w <= 0 || box.h <= 0) return null;
+  const image = store.context(key).getImageData(box.x, box.y, box.w, box.h);
+  const alpha = mask.canvas.getContext('2d')!.getImageData(box.x, box.y, box.w, box.h).data;
+  const weights = new Float32Array(box.w * box.h);
+  for (let i = 0; i < weights.length; i++) weights[i] = alpha[i * 4 + 3] / 255;
+  const result = heal(image.data, box.w, box.h, weights);
+  if (!result) return null;
+  return editSurface(store, key, box, context => context.putImageData(new ImageData(result.data as Uint8ClampedArray<ArrayBuffer>, box.w, box.h), box.x, box.y));
 }

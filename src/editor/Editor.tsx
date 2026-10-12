@@ -13,7 +13,7 @@ import { effectivePressure } from '../lib/brush.mjs';
 import { compositeInto, createDoc, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer, type AdjustLayer } from './document';
 import { PixelStore, union, type Box } from './pixels';
 import { arrayMask, combine, invertSelection, selectAll, shapeMask, type SelectMode, type Selection } from './selection';
-import { bucketFill, editSurface, gradientFill, hexToRgb, rgbToHex, Stroke } from './tools';
+import { bucketFill, editSurface, gradientFill, healSurface, HealMask, hexToRgb, rgbToHex, Stroke, type CloneSource } from './tools';
 import { Adjuster } from './gl';
 import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from './Stage';
 import { ExportSheet } from './ExportSheet';
@@ -37,7 +37,8 @@ type Action =
   | { kind: 'lasso'; points: Point[]; mode: SelectMode }
   | { kind: 'gradient'; start: Point; end: Point }
   | { kind: 'shape'; start: Point; end: Point; constrain: boolean }
-  | { kind: 'move'; id: string; start: Point; origin: Point };
+  | { kind: 'move'; id: string; start: Point; origin: Point }
+  | { kind: 'heal'; mask: HealMask; key: string; layerId: string };
 /** Where painting lands: a raster layer or a layer mask, with its position in the document. */
 interface Surface { key: string; layer: Layer; mask: boolean; offset: Point }
 
@@ -51,6 +52,7 @@ const snapLine = (a: Point, b: Point): Point => {
   const angle = Math.round(Math.atan2(b.y - a.y, b.x - a.x) / (Math.PI / 4)) * (Math.PI / 4), length = Math.hypot(b.x - a.x, b.y - a.y);
   return { x: a.x + Math.cos(angle) * length, y: a.y + Math.sin(angle) * length };
 };
+const BRUSHES: Tool[] = ['brush', 'eraser', 'heal', 'clone'];
 const luminance = (hex: string) => { const [r, g, b] = hexToRgb(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const clearColor = (hex: string) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},0)`; };
 
@@ -88,6 +90,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   const hover = useRef<ToolPointer | null>(null);
   const merging = useRef<string | null>(null);
   const composited = useRef<Layer[] | null>(null);
+  const cloneSource = useRef<Point | null>(null), cloneOffset = useRef<Point | null>(null);
   const clipboard = useRef<{ canvas: HTMLCanvasElement; bounds: Box } | null>(null);
   /** Size of the PNG we last put on the system clipboard, so pasting it back lands in place. */
   const clipboardStamp = useRef(0);
@@ -273,7 +276,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   useEffect(() => { if (selected && !selected.mask && target === 'mask') setTarget('layer'); }, [selected, target]);
 
   /** The surface painting tools work on. Painting on a text or shape layer starts a new layer above it. */
-  const surfaceFor = useCallback((paints: boolean): Surface | null => {
+  const surfaceFor = useCallback((paints: boolean, vectorMessage = 'テキストや図形のレイヤーは、ラスタライズすると消去できます。'): Surface | null => {
     const d = historyRef.current?.present;
     const layer = d?.layers.find(l => l.id === d.selected);
     if (!d || !layer) return null;
@@ -281,7 +284,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     if ((target === 'mask' || layer.kind === 'adjust') && layer.mask) return { key: maskKey(layer.id), layer, mask: true, offset: { x: 0, y: 0 } };
     if (layer.kind === 'adjust') { onToast('調整レイヤーに描くにはマスクを追加してください。'); return null; }
     if (layer.kind === 'raster') return { key: layer.id, layer, mask: false, offset: { x: layer.x, y: layer.y } };
-    if (!paints) { onToast('テキストや図形のレイヤーは、ラスタライズすると消去できます。'); return null; }
+    if (!paints) { onToast(vectorMessage); return null; }
     const created = newRaster(d);
     insertLayer(created, '新規レイヤー');
     return { key: created.id, layer: created, mask: false, offset: { x: 0, y: 0 } };
@@ -328,6 +331,35 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         refresh(stroke.add({ x: p.x, y: p.y, pressure: effectivePressure(p.pressure, p.pointerType) }));
         break;
       }
+      case 'clone': {
+        if (p.alt) { cloneSource.current = { x: p.x, y: p.y }; cloneOffset.current = null; break; }
+        if (!cloneSource.current) { onToast('Alt（Option）キーを押しながらクリックして、コピー元を指定してください。'); break; }
+        const surface = surfaceFor(true);
+        if (!surface) break;
+        if (surface.mask) { onToast('マスクにはコピースタンプを使えません。'); break; }
+        // Aligned: the offset chosen by the first stroke stays until a new source is picked.
+        const co = cloneOffset.current ??= { x: cloneSource.current.x - p.x, y: cloneSource.current.y - p.y };
+        let source: CloneSource = { image: 'original', x: -co.x, y: -co.y };
+        if (settings.cloneAll) {
+          const full = makeCanvas(d.width, d.height);
+          compositeInto(full, historyRef.current!.present, store, cache);
+          source = { image: full, x: -(surface.offset.x + co.x), y: -(surface.offset.y + co.y) };
+        }
+        const stroke = new Stroke(store, surface.key, settings.clone, '#000', 'clone', surface.offset, selectionRef.current, source);
+        action.current = { kind: 'stroke', stroke, layerId: surface.layer.id, mask: false, label: 'コピースタンプ' };
+        refresh(stroke.add({ x: p.x, y: p.y, pressure: 1 }));
+        break;
+      }
+      case 'heal': {
+        const surface = surfaceFor(false, 'テキストや図形のレイヤーは、ラスタライズすると修復できます。');
+        if (!surface) break;
+        if (surface.mask) { onToast('マスクには修復ブラシを使えません。'); break; }
+        const target = store.get(surface.key)!;
+        const mask = new HealMask(target.width, target.height, settings.heal.size, settings.heal.hardness, surface.offset);
+        mask.add({ x: p.x, y: p.y, pressure: 1 });
+        action.current = { kind: 'heal', mask, key: surface.key, layerId: surface.layer.id };
+        break;
+      }
       case 'fill': {
         const surface = surfaceFor(true);
         if (!surface) break;
@@ -359,6 +391,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const a = action.current;
     if (!a) return;
     if (a.kind === 'stroke') refresh(a.stroke.add({ x: p.x, y: p.y, pressure: effectivePressure(p.pressure, p.pointerType) }));
+    else if (a.kind === 'heal') a.mask.add({ x: p.x, y: p.y, pressure: 1 });
     else if (a.kind === 'select') { a.end = p; a.square = p.shift && a.mode !== 'add'; }
     else if (a.kind === 'lasso') { const last = a.points[a.points.length - 1]; if (Math.hypot(p.x - last.x, p.y - last.y) > 1) a.points.push(p); }
     else if (a.kind === 'gradient') a.end = p.shift ? snapLine(a.start, p) : p;
@@ -427,6 +460,9 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         shape: { type: settings.shape, w: Math.round(line ? end.x - start.x : area.w), h: Math.round(line ? end.y - start.y : area.h), fill, stroke: line ? colors[0] : settings.shapeStroke ? (fill ? colors[1] : colors[0]) : null, strokeWidth: settings.strokeWidth, radius: settings.radius },
       };
       insertLayer(shape, '図形を追加');
+    } else if (a.kind === 'heal') {
+      const rev = healSurface(store, a.key, a.mask);
+      if (rev !== null) commitSurface(a.layerId, false, rev, 'スポット修復', false);
     } else if (a.kind === 'move') endGesture();
     bumpOverlay();
   }, [store, cache, adjuster, settings, colors, surfaceFor, commitSurface, insertLayer, setSelection, endGesture]);
@@ -434,7 +470,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
   const onTool = useCallback((phase: ToolPhase, p: ToolPointer | null) => {
     const d = historyRef.current?.present;
     if (!d) return;
-    if (phase === 'hover') { hover.current = p; if (tool === 'brush' || tool === 'eraser') bumpOverlay(); return; }
+    if (phase === 'hover') { hover.current = p; if (BRUSHES.includes(tool)) bumpOverlay(); return; }
     if (phase === 'up') { if (p) move(p); finish(); return; }
     if (!p) return;
     hover.current = p;
@@ -472,7 +508,16 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       c.save(); c.globalAlpha = 0.85; c.drawImage(r.canvas, (line ? a.start.x : area.x) - r.ox, (line ? a.start.y : area.y) - r.oy); c.restore();
     }
     const h = hover.current;
-    if (h && (tool === 'brush' || tool === 'eraser')) {
+    if (a?.kind === 'heal') { c.save(); c.globalAlpha = 0.5; c.drawImage(a.mask.canvas, a.mask.offset.x, a.mask.offset.y); c.restore(); }
+    const src = cloneSource.current;
+    if (tool === 'clone' && src) {
+      // Where the clone stamp copies from: the picked point, or the hover point plus the aligned offset.
+      const at = h && cloneOffset.current ? { x: h.x + cloneOffset.current.x, y: h.y + cloneOffset.current.y } : src;
+      const r = settings.clone.size / 2;
+      c.save(); c.lineWidth = px; c.strokeStyle = '#fff'; c.setLineDash([3 * px, 3 * px]);
+      c.beginPath(); c.arc(at.x, at.y, r, 0, Math.PI * 2); c.moveTo(at.x - 6 * px, at.y); c.lineTo(at.x + 6 * px, at.y); c.moveTo(at.x, at.y - 6 * px); c.lineTo(at.x, at.y + 6 * px); c.stroke(); c.restore();
+    }
+    if (h && (tool === 'brush' || tool === 'eraser' || tool === 'heal' || tool === 'clone')) {
       const options = settings[tool];
       const radius = Math.max(options.size / 2, 2 * px);
       c.save(); c.beginPath(); c.arc(h.x, h.y, radius, 0, Math.PI * 2);
@@ -755,7 +800,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         updateLayer(layer.id, { x: layer.x + dx, y: layer.y + dy }, '移動', true);
       }
       else if (key === '[' || key === ']') {
-        const which = tool === 'eraser' ? 'eraser' : 'brush', size = settings[which].size;
+        const which = tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush', size = settings[which].size;
         setSettings({ [which]: { ...settings[which], size: Math.max(1, Math.min(500, Math.round(key === ']' ? size * 1.2 + 1 : size / 1.2 - 1))) } });
         bumpOverlay();
       }
@@ -763,7 +808,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
       else if (key === 'd') setColors(['#000000', '#ffffff']);
       else if (event.shiftKey && key === 'n') layerActions.add();
       else {
-        const next = ({ v: 'move', l: 'lasso', w: 'wand', b: 'brush', e: 'eraser', i: 'eyedropper', t: 'text', u: 'shape', h: 'hand', z: 'zoom' } as Record<string, Tool>)[key]
+        const next = ({ v: 'move', l: 'lasso', w: 'wand', b: 'brush', e: 'eraser', j: 'heal', s: 'clone', i: 'eyedropper', t: 'text', u: 'shape', h: 'hand', z: 'zoom' } as Record<string, Tool>)[key]
           ?? (key === 'm' ? (tool === 'marquee' || event.shiftKey ? (tool === 'ellipse' ? 'marquee' : 'ellipse') : 'marquee') : undefined)
           ?? (key === 'g' ? (tool === 'fill' || event.shiftKey ? (tool === 'gradient' ? 'fill' : 'gradient') : 'fill') : undefined)
           ?? (key === 'c' ? (tool === 'crop' ? 'hand' : 'crop') : undefined);

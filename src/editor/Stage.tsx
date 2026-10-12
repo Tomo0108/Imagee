@@ -3,7 +3,7 @@ import { centered, fitScale, zoomAt, type View } from '../lib/viewport.mjs';
 import { apply, clampRect, effectiveCrop, invert, orientedSize, outputSize, resizeCrop, sourceMatrix, type Rect } from '../lib/geometry.mjs';
 import { applySourceTransform, drawGeometry, type Doc } from './document';
 
-export type Tool = 'move' | 'marquee' | 'ellipse' | 'lasso' | 'wand' | 'brush' | 'eraser' | 'fill' | 'gradient' | 'eyedropper' | 'text' | 'shape' | 'crop' | 'hand' | 'zoom';
+export type Tool = 'move' | 'marquee' | 'ellipse' | 'lasso' | 'wand' | 'brush' | 'eraser' | 'heal' | 'clone' | 'fill' | 'gradient' | 'eyedropper' | 'text' | 'shape' | 'crop' | 'hand' | 'zoom';
 export type ToolPhase = 'down' | 'move' | 'up' | 'hover';
 /** Pointer position in document pixels, with pen pressure and modifier keys. */
 export interface ToolPointer { x: number; y: number; pressure: number; pointerType: string; shift: boolean; alt: boolean }
@@ -26,7 +26,7 @@ type Gesture =
 
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const HANDLE_CURSOR: Record<string, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', move: 'move' };
-const TOOL_CURSOR: Partial<Record<Tool, string>> = { move: 'move', brush: 'none', eraser: 'none', text: 'text', zoom: 'zoom-in', hand: 'grab', crop: 'grab' };
+const TOOL_CURSOR: Partial<Record<Tool, string>> = { move: 'move', brush: 'none', eraser: 'none', heal: 'none', clone: 'none', text: 'text', zoom: 'zoom-in', hand: 'grab', crop: 'grab' };
 const NAVIGATION: Tool[] = ['hand', 'zoom', 'crop'];
 
 function checkerPattern(context: CanvasRenderingContext2D, tone: 'light' | 'dark', dpr: number) {

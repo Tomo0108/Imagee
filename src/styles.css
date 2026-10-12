@@ -552,3 +552,6 @@ html[data-theme="light"] .histogram .h-b { fill: rgba(10, 132, 255, .35); }
 .preset-save { display: flex; gap: 6px; }
 .preset-save input { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 0; border-radius: 7px; background: var(--fill-2); color: var(--label); font: inherit; font-size: var(--type-caption); }
 .adjust-thumb { display: grid; place-items: center; color: var(--a1); background: color-mix(in srgb, var(--a1) 14%, transparent); }
+.layer-list, .layer-list li { min-width: 0; }
+.layer-main { overflow: hidden; }
+.layer-main .chip { flex: none; }
