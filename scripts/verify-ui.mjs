@@ -52,10 +52,38 @@ try {
   assert.equal(await page.locator('.zoom-readout').textContent(), '100%');
   await page.keyboard.press('Control+0');
 
-  await page.getByRole('slider').fill('40');
+  // Adjustments: a slider drag is one history step, auto-correct is another.
+  await page.getByRole('slider', { name: '露光量' }).fill('0.8');
+  await page.getByRole('slider', { name: '露光量' }).fill('1');
+  await page.getByRole('slider', { name: '露光量' }).dispatchEvent('pointerup');
+  await page.getByRole('slider', { name: '色温度' }).fill('35');
+  await page.getByRole('slider', { name: '色温度' }).dispatchEvent('pointerup');
+  await page.getByRole('slider', { name: '周辺光量' }).fill('-45');
+  await page.getByRole('slider', { name: '周辺光量' }).dispatchEvent('pointerup');
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: `${out}/editor-adjust-dark.png` });
+  await page.getByRole('button', { name: '補正前' }).dispatchEvent('pointerdown');
+  await page.locator('.stage-badge').waitFor();
+  await page.getByRole('button', { name: '補正前' }).dispatchEvent('pointerup');
+  await page.getByRole('button', { name: '自動補正' }).click();
   await page.getByRole('tab', { name: '履歴' }).click();
-  assert.equal(await page.locator('.history-list li').count(), 2);
+  assert.deepEqual(await page.locator('.history-list li').allTextContents(), ['開く', '露光量', '色温度', '周辺光量', '自動補正']);
   await page.keyboard.press('Control+z');
+
+  // Crop to a square and rotate a quarter turn: output becomes 1000 × 1000, then stays square.
+  await page.getByRole('button', { name: '切り抜きと回転', exact: true }).click();
+  await page.locator('.crop-bar').waitFor();
+  await page.locator('.crop-bar select').selectOption('1:1');
+  await page.getByRole('slider', { name: '角度' }).fill('4.5');
+  await page.getByRole('slider', { name: '角度' }).dispatchEvent('pointerup');
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: `${out}/editor-crop-dark.png` });
+  await page.getByRole('button', { name: '完了' }).click();
+  const dims = await page.locator('.doc-title span').textContent();
+  const [w, h] = dims.split('×').map(v => Number(v.trim()));
+  assert.equal(w, h, `square crop, got ${dims}`);
+  assert.ok(w < 1000 && w > 800, `straightened square crop, got ${dims}`);
+  await page.waitForTimeout(500);
   await page.getByRole('tab', { name: '情報' }).click();
   await page.locator('.histogram').waitFor();
   await page.screenshot({ path: `${out}/editor-info-dark.png` });
@@ -66,6 +94,11 @@ try {
   await page.screenshot({ path: `${out}/export-dark.png` });
   await page.keyboard.press('Escape');
 
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await page.waitForTimeout(800);
+  await page.getByRole('button', { name: '夕焼け.pngを開く' }).click();
+  assert.equal(await page.locator('.doc-title span').textContent(), dims, 'edits are restored when reopening');
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();
   await page.locator('.project').first().waitFor();

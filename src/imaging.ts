@@ -39,7 +39,7 @@ const avifSupport = (async () => {
 export function supportsAvif() { return avifSupport; }
 
 export interface Histogram { r: Uint32Array; g: Uint32Array; b: Uint32Array; l: Uint32Array; max: number }
-export function histogram(bitmap: ImageBitmap): Histogram {
+export function histogram(bitmap: { width: number; height: number } & CanvasImageSource): Histogram {
   const ratio = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
   const target = canvas(Math.max(1, Math.round(bitmap.width * ratio)), Math.max(1, Math.round(bitmap.height * ratio)));
   const context = target.getContext('2d', { willReadFrequently: true })!;

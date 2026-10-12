@@ -4,22 +4,24 @@ import { EXPORT_FORMATS, exportName, formatBytes, scaledSize, type ExportFormat 
 import { canvas, supportsAvif, toBlob } from '../imaging';
 import { saveBlob } from '../platform';
 import { Modal, Segmented, Slider } from '../ui';
-import { drawLayers, type Bitmaps, type Doc } from './document';
+import { drawGeometry, type Doc } from './document';
+import { outputSize } from '../lib/geometry.mjs';
 
-async function render(doc: Doc, bitmaps: Bitmaps, format: (typeof EXPORT_FORMATS)[number], percent: number, quality: number) {
-  const size = scaledSize(doc.width, doc.height, percent);
+async function render(doc: Doc, image: HTMLCanvasElement, format: (typeof EXPORT_FORMATS)[number], percent: number, quality: number) {
+  const out = outputSize(doc.geometry, doc.width, doc.height);
+  const size = scaledSize(out.width, out.height, percent);
   const target = canvas(size.width, size.height);
   const context = target.getContext('2d')!;
   if (!format.alpha) { context.fillStyle = '#ffffff'; context.fillRect(0, 0, size.width, size.height); }
   context.imageSmoothingQuality = 'high';
-  drawLayers(context, doc, bitmaps, 0, 0, size.width / doc.width);
+  drawGeometry(context, image, doc, 0, 0, size.width / out.width, 'output');
   const blob = await toBlob(target, format.mime, format.lossy ? quality / 100 : undefined);
   target.width = target.height = 0;
   if (blob.type !== format.mime) throw new Error(`このブラウザは${format.label}の書き出しに対応していません。`);
   return blob;
 }
 
-export function ExportSheet({ doc, bitmaps, name, onClose, onToast }: { doc: Doc; bitmaps: Bitmaps; name: string; onClose: () => void; onToast: (message: string) => void }) {
+export function ExportSheet({ doc, image, name, onClose, onToast }: { doc: Doc; image: HTMLCanvasElement; name: string; onClose: () => void; onToast: (message: string) => void }) {
   const [formatId, setFormatId] = useState<ExportFormat>('png');
   const [quality, setQuality] = useState(88);
   const [percent, setPercent] = useState(100);
@@ -27,7 +29,8 @@ export function ExportSheet({ doc, bitmaps, name, onClose, onToast }: { doc: Doc
   const [estimate, setEstimate] = useState<{ size: number } | { error: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const format = EXPORT_FORMATS.find(item => item.id === formatId)!;
-  const size = scaledSize(doc.width, doc.height, percent);
+  const out = outputSize(doc.geometry, doc.width, doc.height);
+  const size = scaledSize(out.width, out.height, percent);
   const job = useRef(0);
   useEffect(() => { void supportsAvif().then(setAvif); }, []);
   const formats = useMemo(() => EXPORT_FORMATS.filter(item => item.id !== 'avif' || avif), [avif]);
@@ -37,15 +40,15 @@ export function ExportSheet({ doc, bitmaps, name, onClose, onToast }: { doc: Doc
     const id = ++job.current;
     setEstimate(null);
     const timer = setTimeout(() => {
-      render(doc, bitmaps, format, percent, quality).then(blob => id === job.current && setEstimate({ size: blob.size }), (e: Error) => id === job.current && setEstimate({ error: e.message }));
+      render(doc, image, format, percent, quality).then(blob => id === job.current && setEstimate({ size: blob.size }), (e: Error) => id === job.current && setEstimate({ error: e.message }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [doc, bitmaps, format, percent, quality]);
+  }, [doc, image, format, percent, quality]);
 
   const save = async () => {
     setSaving(true);
     try {
-      const blob = await render(doc, bitmaps, format, percent, quality);
+      const blob = await render(doc, image, format, percent, quality);
       const saved = await saveBlob(blob, exportName(name, format.extension), format.extension, format.label);
       if (saved) { onToast(`「${saved}」を書き出しました。`); onClose(); }
     } catch (e) { onToast((e as Error).message || '書き出しに失敗しました。'); }

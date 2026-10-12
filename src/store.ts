@@ -1,4 +1,4 @@
-export interface Project { id: string; name: string; type: string; size: number; width: number; height: number; added: number; opened: number; favorite: boolean; thumbnail?: Blob }
+export interface Project { id: string; name: string; type: string; size: number; width: number; height: number; added: number; opened: number; favorite: boolean; thumbnail?: Blob; edits?: import('./editor/document').SavedEdits; edited?: number }
 
 // Image bytes are stored once in `sources`; library reads and edits only touch metadata.
 const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {

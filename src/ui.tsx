@@ -45,11 +45,13 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
   return <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`toggle${checked ? ' on' : ''}`} onClick={() => onChange(!checked)}/>;
 }
 
-export function Slider({ label, value, min, max, step = 1, unit = '', onChange, onCommit }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (value: number) => void; onCommit?: () => void }) {
+export function Slider({ label, value, min, max, step = 1, unit = '', onChange, onCommit, onReset, format, centered }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (value: number) => void; onCommit?: () => void; onReset?: () => void; format?: (value: number) => string; centered?: boolean }) {
   const percent = ((value - min) / (max - min)) * 100;
-  return <label className="slider">
-    <span className="slider-head"><span>{label}</span><output className="num">{value}{unit}</output></span>
-    <input type="range" min={min} max={max} step={step} value={value} style={{ '--fill': `${percent}%` } as React.CSSProperties}
+  // Bipolar sliders fill from the centre so the neutral point is obvious.
+  const from = centered ? Math.min(50, percent) : 0, to = centered ? Math.max(50, percent) : percent;
+  return <label className={`slider${centered && value !== 0 ? ' changed' : ''}`} onDoubleClick={onReset ? () => { onReset(); onCommit?.(); } : undefined} title={onReset ? 'ダブルクリックでリセット' : undefined}>
+    <span className="slider-head"><span>{label}</span><output className="num">{format ? format(value) : `${value}${unit}`}</output></span>
+    <input type="range" min={min} max={max} step={step} value={value} aria-label={label} style={{ '--from': `${from}%`, '--to': `${to}%` } as React.CSSProperties}
       onChange={e => onChange(Number(e.target.value))} onPointerUp={onCommit} onKeyUp={onCommit}/>
   </label>;
 }

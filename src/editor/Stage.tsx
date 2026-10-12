@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { centered, fitScale, toImage, zoomAt, type View } from '../lib/viewport.mjs';
-import { drawLayers, type Bitmaps, type Doc } from './document';
+import { clampRect, effectiveCrop, orientedSize, outputSize, resizeCrop, type Rect } from '../lib/geometry.mjs';
+import { drawGeometry, type Doc } from './document';
 
-export type Tool = 'hand' | 'zoom';
+export type Tool = 'hand' | 'zoom' | 'crop';
 interface Props {
-  doc: Doc; bitmaps: Bitmaps; view: View | null; tool: Tool; spaceHeld: boolean; checkerboard: 'light' | 'dark';
+  doc: Doc; image: HTMLCanvasElement | null; imageVersion: number; view: View | null; tool: Tool; spaceHeld: boolean; checkerboard: 'light' | 'dark';
+  aspect: number; onCrop: (crop: Rect, final: boolean) => void;
   onView: (view: View) => void; onCursor: (point: { x: number; y: number } | null) => void; onSize: (size: { width: number; height: number }) => void;
 }
+type Gesture =
+  | { kind: 'pan'; x: number; y: number; view: View }
+  | { kind: 'pinch'; distance: number; mid: { x: number; y: number }; view: View }
+  | { kind: 'crop'; handle: string; x: number; y: number; start: Rect };
+
+const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+const HANDLE_CURSOR: Record<string, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', move: 'move' };
 
 function checkerPattern(context: CanvasRenderingContext2D, tone: 'light' | 'dark', dpr: number) {
   const cell = Math.round(8 * dpr);
@@ -19,14 +28,28 @@ function checkerPattern(context: CanvasRenderingContext2D, tone: 'light' | 'dark
   return context.createPattern(tile, 'repeat')!;
 }
 
-export function Stage({ doc, bitmaps, view, tool, spaceHeld, checkerboard, onView, onCursor, onSize }: Props) {
+/** Size of what the stage shows: the cropped output, or the whole rotated frame while cropping. */
+export function contentSize(doc: Doc, tool: Tool) {
+  return tool === 'crop' ? orientedSize(doc.width, doc.height, doc.geometry.quarter) : outputSize(doc.geometry, doc.width, doc.height);
+}
+
+function handlePoints(r: Rect) {
+  const xs = { w: r.x, e: r.x + r.w, '': r.x + r.w / 2 }, ys = { n: r.y, s: r.y + r.h, '': r.y + r.h / 2 };
+  return HANDLES.map(handle => ({ handle, x: xs[(handle.match(/[we]/)?.[0] || '') as keyof typeof xs], y: ys[(handle.match(/[ns]/)?.[0] || '') as keyof typeof ys] }));
+}
+
+export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checkerboard, aspect, onCrop, onView, onCursor, onSize }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0, dpr: 1 });
   const viewRef = useRef(view); viewRef.current = view;
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const gesture = useRef<{ kind: 'pan'; x: number; y: number; view: View } | { kind: 'pinch'; distance: number; mid: { x: number; y: number }; view: View } | null>(null);
+  const gesture = useRef<Gesture | null>(null);
+  const [liveCrop, setLiveCrop] = useState<Rect | null>(null);
+  const [hover, setHover] = useState('');
   const [panning, setPanning] = useState(false);
+  const content = contentSize(doc, tool);
+  const crop = liveCrop || effectiveCrop(doc.geometry, doc.width, doc.height);
 
   useLayoutEffect(() => {
     const element = host.current!;
@@ -41,8 +64,8 @@ export function Stage({ doc, bitmaps, view, tool, spaceHeld, checkerboard, onVie
   useEffect(() => {
     if (!size.width) return;
     onSize({ width: size.width, height: size.height });
-    if (!viewRef.current) onView(centered(doc.width, doc.height, size.width, size.height, fitScale(doc.width, doc.height, size.width, size.height)));
-  }, [size, doc.width, doc.height, onView, onSize]);
+    if (!viewRef.current) onView(centered(content.width, content.height, size.width, size.height, fitScale(content.width, content.height, size.width, size.height, tool === 'crop' ? 72 : 48)));
+  }, [size, content.width, content.height, tool, view, onView, onSize]);
 
   useEffect(() => {
     const element = canvas.current;
@@ -50,32 +73,65 @@ export function Stage({ doc, bitmaps, view, tool, spaceHeld, checkerboard, onVie
     const { dpr } = size;
     element.width = Math.round(size.width * dpr); element.height = Math.round(size.height * dpr);
     const context = element.getContext('2d')!;
-    context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, element.width, element.height);
-    // Draw in device pixels, snapping the image edge so it stays crisp.
     const x = Math.round(view.x * dpr), y = Math.round(view.y * dpr), scale = view.scale * dpr;
-    const w = Math.round(doc.width * scale), h = Math.round(doc.height * scale);
+    const w = Math.round(content.width * scale), h = Math.round(content.height * scale);
+    context.imageSmoothingEnabled = view.scale < 2;
+    context.imageSmoothingQuality = 'high';
+    if (tool === 'crop') {
+      if (image) drawGeometry(context, image, doc, x, y, scale, 'frame', false);
+      // Dim everything outside the crop, then draw the frame, thirds and handles.
+      const cx = x + crop.x * scale, cy = y + crop.y * scale, cw = crop.w * scale, ch = crop.h * scale;
+      context.save();
+      context.beginPath(); context.rect(0, 0, element.width, element.height); context.rect(cx, cy, cw, ch);
+      context.fillStyle = 'rgba(10,10,14,.62)'; context.fill('evenodd');
+      context.lineWidth = dpr;
+      context.strokeStyle = 'rgba(255,255,255,.35)';
+      context.beginPath();
+      for (const t of [1 / 3, 2 / 3]) { context.moveTo(cx + cw * t, cy); context.lineTo(cx + cw * t, cy + ch); context.moveTo(cx, cy + ch * t); context.lineTo(cx + cw, cy + ch * t); }
+      context.stroke();
+      context.strokeStyle = '#fff'; context.lineWidth = 1.5 * dpr; context.strokeRect(cx, cy, cw, ch);
+      context.fillStyle = '#fff'; context.shadowColor = 'rgba(0,0,0,.4)'; context.shadowBlur = 4 * dpr;
+      for (const p of handlePoints({ x: cx, y: cy, w: cw, h: ch })) {
+        const corner = p.handle.length === 2, len = (corner ? 18 : 22) * dpr, t = 3.5 * dpr;
+        if (corner) {
+          const sx = p.handle.includes('w') ? 1 : -1, sy = p.handle.includes('n') ? 1 : -1;
+          // L-shaped corner: negative sizes draw toward the inside of the crop.
+          context.fillRect(p.x - sx * t / 2, p.y - sy * t / 2, sx * len, sy * t);
+          context.fillRect(p.x - sx * t / 2, p.y - sy * t / 2, sx * t, sy * len);
+        } else if (p.handle === 'n' || p.handle === 's') context.fillRect(p.x - len / 2, p.y - t / 2, len, t);
+        else context.fillRect(p.x - t / 2, p.y - len / 2, t, len);
+      }
+      context.restore();
+      return;
+    }
+    context.save();
     context.shadowColor = 'rgba(0,0,0,.45)'; context.shadowBlur = 28 * dpr; context.shadowOffsetY = 6 * dpr;
     context.fillStyle = checkerPattern(context, checkerboard, dpr);
     context.fillRect(x, y, w, h);
-    context.shadowColor = 'transparent';
-    context.imageSmoothingEnabled = view.scale < 2;
-    context.imageSmoothingQuality = 'high';
-    context.save(); context.beginPath(); context.rect(x, y, w, h); context.clip();
-    drawLayers(context, doc, bitmaps, x, y, scale);
+    context.restore();
+    if (image) drawGeometry(context, image, doc, x, y, scale, 'output');
     if (view.scale >= 12) {
-      // Pixel grid, only for the visible part of the image.
+      // Pixel grid over the visible part of the output.
       const left = Math.max(0, Math.floor(-x / scale)), top = Math.max(0, Math.floor(-y / scale));
-      const right = Math.min(doc.width, Math.ceil((element.width - x) / scale)), bottom = Math.min(doc.height, Math.ceil((element.height - y) / scale));
+      const right = Math.min(content.width, Math.ceil((element.width - x) / scale)), bottom = Math.min(content.height, Math.ceil((element.height - y) / scale));
       context.beginPath();
       for (let i = left; i <= right; i++) { const px = Math.round(x + i * scale) + .5; context.moveTo(px, y + top * scale); context.lineTo(px, y + bottom * scale); }
       for (let j = top; j <= bottom; j++) { const py = Math.round(y + j * scale) + .5; context.moveTo(x + left * scale, py); context.lineTo(x + right * scale, py); }
       context.strokeStyle = 'rgba(128,128,128,.35)'; context.lineWidth = 1; context.stroke();
     }
-    context.restore();
-  }, [view, size, doc, bitmaps, checkerboard]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, size, doc, image, imageVersion, checkerboard, tool, crop.x, crop.y, crop.w, crop.h, content.width, content.height]);
 
   const local = (event: { clientX: number; clientY: number }) => { const rect = host.current!.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; };
+  const hitCrop = (point: { x: number; y: number }) => {
+    const v = viewRef.current;
+    if (!v || tool !== 'crop') return '';
+    const r = { x: v.x + crop.x * v.scale, y: v.y + crop.y * v.scale, w: crop.w * v.scale, h: crop.h * v.scale };
+    const reach = 14;
+    for (const p of handlePoints(r)) if (Math.abs(point.x - p.x) <= reach && Math.abs(point.y - p.y) <= reach) return p.handle;
+    return point.x > r.x && point.x < r.x + r.w && point.y > r.y && point.y < r.y + r.h ? 'move' : '';
+  };
 
   useEffect(() => {
     const element = host.current!;
@@ -95,47 +151,57 @@ export function Stage({ doc, bitmaps, view, tool, spaceHeld, checkerboard, onVie
     return () => element.removeEventListener('wheel', wheel);
   }, [onView]);
 
-  const startPinch = () => {
-    const [a, b] = [...pointers.current.values()];
-    gesture.current = { kind: 'pinch', distance: Math.hypot(b.x - a.x, b.y - a.y) || 1, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, view: viewRef.current! };
-  };
-
   const pointerDown = useCallback((event: React.PointerEvent) => {
     const current = viewRef.current;
     if (!current) return;
     const point = local(event);
     pointers.current.set(event.pointerId, point);
     event.currentTarget.setPointerCapture(event.pointerId);
-    if (pointers.current.size === 2) { startPinch(); return; }
-    if (tool === 'hand' || spaceHeld || event.button === 1) { gesture.current = { kind: 'pan', x: point.x, y: point.y, view: current }; setPanning(true); return; }
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      if (gesture.current?.kind === 'crop') setLiveCrop(null);
+      gesture.current = { kind: 'pinch', distance: Math.hypot(b.x - a.x, b.y - a.y) || 1, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, view: current };
+      return;
+    }
+    const hit = event.button === 0 && !spaceHeld ? hitCrop(point) : '';
+    if (hit) { gesture.current = { kind: 'crop', handle: hit, x: point.x, y: point.y, start: crop }; return; }
+    if (tool === 'hand' || tool === 'crop' || spaceHeld || event.button === 1) { gesture.current = { kind: 'pan', x: point.x, y: point.y, view: current }; setPanning(true); return; }
     if (tool === 'zoom' && event.button === 0) onView(zoomAt(current, current.scale * (event.altKey ? 0.5 : 2), point.x, point.y));
-  }, [tool, spaceHeld, onView]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, spaceHeld, onView, crop]);
 
   const pointerMove = useCallback((event: React.PointerEvent) => {
     const point = local(event);
     const current = viewRef.current;
-    if (current) { const image = toImage(current, point.x, point.y); onCursor(image.x >= 0 && image.y >= 0 && image.x < doc.width && image.y < doc.height ? { x: Math.floor(image.x), y: Math.floor(image.y) } : null); }
-    if (!pointers.current.has(event.pointerId)) return;
+    if (current && tool !== 'crop') { const image = toImage(current, point.x, point.y); onCursor(image.x >= 0 && image.y >= 0 && image.x < content.width && image.y < content.height ? { x: Math.floor(image.x), y: Math.floor(image.y) } : null); }
+    if (!pointers.current.has(event.pointerId)) { setHover(hitCrop(point)); return; }
     pointers.current.set(event.pointerId, point);
     const g = gesture.current;
     if (g?.kind === 'pan') onView({ ...g.view, x: g.view.x + point.x - g.x, y: g.view.y + point.y - g.y });
-    else if (g?.kind === 'pinch' && pointers.current.size >= 2) {
+    else if (g?.kind === 'crop' && current) {
+      const dx = (point.x - g.x) / current.scale, dy = (point.y - g.y) / current.scale;
+      const frame = { width: content.width, height: content.height };
+      setLiveCrop(g.handle === 'move' ? clampRect({ ...g.start, x: g.start.x + dx, y: g.start.y + dy }, frame) : resizeCrop(g.start, g.handle, dx, dy, aspect, frame));
+    } else if (g?.kind === 'pinch' && pointers.current.size >= 2) {
       const [a, b] = [...pointers.current.values()];
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       const zoomed = zoomAt(g.view, g.view.scale * (Math.hypot(b.x - a.x, b.y - a.y) / g.distance), g.mid.x, g.mid.y);
       onView({ ...zoomed, x: zoomed.x + mid.x - g.mid.x, y: zoomed.y + mid.y - g.mid.y });
     }
-  }, [doc.width, doc.height, onView, onCursor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content.width, content.height, onView, onCursor, tool, aspect, crop]);
 
   const pointerUp = useCallback((event: React.PointerEvent) => {
     pointers.current.delete(event.pointerId);
+    if (gesture.current?.kind === 'crop') { if (liveCrop) onCrop(liveCrop, true); setLiveCrop(null); }
     if (pointers.current.size === 1 && gesture.current?.kind === 'pinch') { const [p] = [...pointers.current.values()]; gesture.current = { kind: 'pan', x: p.x, y: p.y, view: viewRef.current! }; return; }
     if (!pointers.current.size) { gesture.current = null; setPanning(false); }
-  }, []);
+  }, [liveCrop, onCrop]);
 
-  const cursor = panning ? 'grabbing' : tool === 'hand' || spaceHeld ? 'grab' : tool === 'zoom' ? 'zoom-in' : 'default';
-  return <div ref={host} className="stage" style={{ cursor }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={() => onCursor(null)}
-    onDoubleClick={() => { if (tool === 'hand') onView(centered(doc.width, doc.height, size.width, size.height, fitScale(doc.width, doc.height, size.width, size.height))); }}>
+  const active = gesture.current?.kind === 'crop' ? gesture.current.handle : hover;
+  const cursor = panning ? 'grabbing' : active && !spaceHeld ? HANDLE_CURSOR[active] : tool === 'hand' || tool === 'crop' || spaceHeld ? 'grab' : tool === 'zoom' ? 'zoom-in' : 'default';
+  return <div ref={host} className="stage" style={{ cursor }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onPointerLeave={() => { onCursor(null); setHover(''); }}
+    onDoubleClick={() => { if (tool === 'hand') onView(centered(content.width, content.height, size.width, size.height, fitScale(content.width, content.height, size.width, size.height))); }}>
     <canvas ref={canvas} aria-label="キャンバス" role="img"/>
   </div>;
 }
