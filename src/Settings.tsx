@@ -18,6 +18,6 @@ export function Settings({ prefs, onChange, onClose }: { prefs: Preferences; onC
       <div className="setting-row"><span>画像を貼り付けて追加</span><span><Kbd>{mod}</Kbd><Kbd>V</Kbd></span></div>
     </div></section>
     <p className="setting-note">画像はこの端末の中だけに保存されます。アカウントやアップロードは不要です。</p>
-    <div className="app-about"><div><strong translate="no">Imagee</strong><span>バージョン {pkg.version}</span></div></div>
+    <div className="app-about"><img src={`${import.meta.env.BASE_URL}icons/icon-192.png`} width="48" height="48" alt=""/><div><strong translate="no">Imagee</strong><span>バージョン {pkg.version}</span></div></div>
   </Modal>;
 }

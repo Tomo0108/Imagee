@@ -77,4 +77,4 @@ npm run build && npm run test:ui   # Chromium で画面を操作してスクリ�
 
 ## アイコン
 
-アプリアイコンは別途デザインされます。`public/icons/README.md` に配置するファイルと設定箇所をまとめています。
+紫のガラスで形作った「I」をアプリアイコンとして使用しています。Web・PWA・macOS・Windows とアプリ内のロゴに反映しています。元画像と各形式は `public/icons/` に配置し、再生成の手順は `public/icons/README.md` にまとめています。

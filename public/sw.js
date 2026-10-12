@@ -1,5 +1,5 @@
-const CACHE = 'imagee-shell-v2';
-const PRECACHE = ['./', './index.html', './manifest.webmanifest'];
+const CACHE = 'imagee-shell-v3';
+const PRECACHE = ['./', './index.html', './manifest.webmanifest', './icons/icon-32.png', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(PRECACHE)).then(() => self.skipWaiting()));

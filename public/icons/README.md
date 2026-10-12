@@ -1,7 +1,18 @@
-App icons go here (designed separately). Expected files:
+Imagee's approved violet glass `I` icon (without a photograph symbol).
 
 - `icon-32.png`, `icon-180.png`, `icon-192.png`, `icon-512.png` (web / PWA)
 - `Imagee.icns` (macOS), `Imagee.ico` (Windows)
+- `artwork.png` is the original transparent PNG source.
 
-When they are added, list the PNGs in `public/manifest.webmanifest`, link `icon-32.png` / `icon-180.png`
-from `index.html`, and set `build.mac.icon` / `build.win.icon` in `package.json`.
+The icons are connected to the web manifest, favicon, Apple touch icon, Electron
+window, desktop packages, library sidebar, settings and distribution site.
+
+To regenerate after updating `artwork.png`, install Python 3 and Pillow, then run
+from the project root:
+
+```sh
+python -m pip install Pillow
+python scripts/build-icons.py
+```
+
+Generated files are checked in; normal builds do not require Python or Pillow.

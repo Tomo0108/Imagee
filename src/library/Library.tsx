@@ -54,7 +54,7 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
     <Ambient/>
     <div className="titlebar"/>
     <aside className="sidebar">
-      <div className="brand"><div className="brand-text"><div className="brand-name" translate="no">Imagee</div><div className="brand-sub">画像エディタ</div></div><IconButton icon={Settings2} label="設定" onClick={onSettings}/></div>
+      <div className="brand"><img className="brand-icon" src={`${import.meta.env.BASE_URL}icons/icon-192.png`} width="36" height="36" alt=""/><div className="brand-text"><div className="brand-name" translate="no">Imagee</div><div className="brand-sub">画像エディタ</div></div><IconButton icon={Settings2} label="設定" onClick={onSettings}/></div>
       <nav className="nav" aria-label="ライブラリ">
         <div className="nav-label">ライブラリ</div>
         {FILTERS.map(({ id, label, icon: Icon }) => <button key={id} type="button" className={`nav-item${filter === id ? ' active' : ''}`} aria-current={filter === id ? 'page' : undefined} onClick={() => setFilter(id)}>

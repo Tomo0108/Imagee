@@ -64,6 +64,7 @@
       }
     ],
     "mac": {
+      "icon": "public/icons/Imagee.icns",
       "category": "public.app-category.graphics-design",
       "identity": null,
       "hardenedRuntime": false,
@@ -87,6 +88,7 @@
       "artifactName": "Imagee-mac-${arch}.${ext}"
     },
     "win": {
+      "icon": "public/icons/Imagee.ico",
       "target": [
         "nsis"
       ],

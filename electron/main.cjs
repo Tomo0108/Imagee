@@ -64,6 +64,7 @@ function createWindow() {
   win = new BrowserWindow({
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 } } : {}),
     width: 1480, height: 960, minWidth: 900, minHeight: 640, title: 'Imagee', backgroundColor: '#1c1c20',
+    icon: join(DIST, 'icons/icon-512.png'),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.setMenuBarVisibility(false);

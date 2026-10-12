@@ -199,6 +199,7 @@ select option { background: var(--window); color: var(--label); }
 html[data-platform="mac"] .sidebar { padding-top: 40px; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 4px 16px 6px; -webkit-app-region: drag; }
 .brand-text { flex: 1; min-width: 0; }
+.brand-icon { width: 36px; height: 36px; flex: none; object-fit: contain; }
 .brand-name { font-weight: 650; font-size: 18px; letter-spacing: -0.015em; line-height: 1.2; }
 .brand-sub { font-size: 11.5px; color: var(--label-3); }
 .brand .icon-btn { -webkit-app-region: no-drag; }
@@ -325,6 +326,7 @@ html[data-platform="mac"] .sidebar { padding-top: 40px; }
 .setting-note.with-icon svg { color: var(--ok); }
 .app-about { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 0.5px solid var(--sep); }
 .app-about strong, .app-about span { display: block; }
+.app-about img { width: 48px; height: 48px; flex: none; object-fit: contain; }
 .app-about span { font-size: var(--type-caption); color: var(--label-3); }
 
 .export { display: grid; gap: 16px; }
