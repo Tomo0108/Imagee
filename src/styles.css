@@ -555,3 +555,4 @@ html[data-theme="light"] .histogram .h-b { fill: rgba(10, 132, 255, .35); }
 .layer-list, .layer-list li { min-width: 0; }
 .layer-main { overflow: hidden; }
 .layer-main .chip { flex: none; }
+.refine { display: inline-flex; align-items: center; gap: 4px; padding-left: 10px; border-left: 0.5px solid var(--sep); }

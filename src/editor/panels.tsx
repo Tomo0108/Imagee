@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, Copy, Eye, EyeOff, ImagePlus, Italic, Plus, SlidersHorizontal, SquareDashed, Trash2, Wand2 } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, Copy, Eye, EyeOff, ImagePlus, Italic, Plus, SlidersHorizontal, SquareDashed, Trash2, Type, Wand2 } from 'lucide-react';
 import type { Project } from '../store';
 import { histogram, type Histogram } from '../imaging';
 import { entries, type History } from '../lib/history.mjs';
@@ -143,13 +143,31 @@ export function LayersPanel({ doc, store, cache, selected, target, onTarget, act
   </div>;
 }
 
+/** Fonts installed on the device (Local Font Access; Chromium and the desktop app). Asked for only on request. */
+const canQueryFonts = typeof window !== 'undefined' && 'queryLocalFonts' in window;
+let localFamilies: Promise<string[]> | null = null;
+function loadLocalFonts() {
+  return localFamilies ??= (window as unknown as { queryLocalFonts: () => Promise<{ family: string }[]> }).queryLocalFonts()
+    .then(list => [...new Set(list.map(font => font.family))].sort((a, b) => a.localeCompare(b, 'ja')))
+    .catch(error => { localFamilies = null; throw error; });
+}
+const localFont = (family: string) => `'${family.replace(/'/g, '')}', 'Noto Sans JP Variable', sans-serif`;
+
 function TextEditor({ text, autoFocus, onChange, onCommit }: { text: TextProps; autoFocus: boolean; onChange: (patch: Partial<TextProps>, label: string, gesture?: boolean) => void; onCommit: () => void }) {
+  const [families, setFamilies] = useState<string[] | null>(null);
+  useEffect(() => { if (localFamilies) void localFamilies.then(setFamilies, () => {}); }, []);
+  const known = FONTS.some(font => font.value === text.font) || !!families?.some(family => localFont(family) === text.font);
   return <section className="panel-section" aria-label="テキスト">
     <textarea className="text-input" value={text.content} rows={3} autoFocus={autoFocus} aria-label="テキスト" onFocus={e => autoFocus && e.target.select()}
       onChange={e => onChange({ content: e.target.value }, 'テキストを編集', true)} onBlur={onCommit}/>
-    <label className="field"><span>フォント</span>
-      <select value={text.font} onChange={e => onChange({ font: e.target.value }, 'フォント')}>{FONTS.map(font => <option key={font.value} value={font.value}>{font.label}</option>)}</select>
-    </label>
+    <div className="field"><span>フォント</span><span className="field-row">
+      <select value={text.font} aria-label="フォント" onChange={e => onChange({ font: e.target.value }, 'フォント')}>
+        {FONTS.map(font => <option key={font.value} value={font.value}>{font.label}</option>)}
+        {families && <optgroup label="この端末のフォント">{families.map(family => <option key={family} value={localFont(family)}>{family}</option>)}</optgroup>}
+        {!known && <option value={text.font}>{text.font.split(',')[0].replace(/'/g, '')}</option>}
+      </select>
+      {canQueryFonts && !families && <IconButton icon={Type} label="この端末にインストールされたフォントを使う" size={16} onClick={() => void loadLocalFonts().then(setFamilies, () => {})}/>}
+    </span></div>
     <Slider label="サイズ" value={text.size} min={6} max={600} unit="px" onChange={size => onChange({ size }, '文字サイズ', true)} onCommit={onCommit}/>
     <div className="field"><span>スタイル</span><span className="field-row">
       <IconButton icon={Bold} label="太字" active={text.weight === 700} size={16} onClick={() => onChange({ weight: text.weight === 700 ? 400 : 700 }, '太字')}/>

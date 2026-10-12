@@ -234,6 +234,18 @@ try {
   await drag([cx + 100, cy + 250], [cx + 110, cy + 250], 3);
   assert.ok(isRed(await pixel(cx + 104, cy + 250)), 'clone stamp copies the source');
   await page.screenshot({ path: `${out}/editor-heal-clone-dark.png` });
+
+  // Refining a selection: grow by 8 px on each side.
+  await page.keyboard.press('m');
+  await drag([cx - 200, cy + 200], [cx - 100, cy + 260], 4);
+  const selectionSize = async () => (await page.locator('.status-bar span', { hasText: '選択' }).textContent()).match(/(\d+) × (\d+)/).slice(1).map(Number);
+  const [sw] = await selectionSize();
+  await page.getByRole('spinbutton', { name: '調整する幅（px）' }).fill('8');
+  await page.getByRole('button', { name: '拡張', exact: true }).click();
+  await page.waitForTimeout(200);
+  const [sw2] = await selectionSize();
+  assert.ok(sw2 >= sw + 12 && sw2 <= sw + 20, `selection grows by about 16 px: ${sw} → ${sw2}`);
+  await page.keyboard.press('Control+d');
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();

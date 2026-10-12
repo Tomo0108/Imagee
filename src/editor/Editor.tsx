@@ -12,7 +12,7 @@ import { floodMask } from '../lib/flood.mjs';
 import { effectivePressure } from '../lib/brush.mjs';
 import { compositeInto, createDoc, drawGeometry, FONTS, LayerCache, maskKey, newLayerId, renderShape, savedEdits, uniqueName, workCanvas, type Doc, type Layer, type RasterLayer, type ShapeLayer, type TextLayer, type AdjustLayer } from './document';
 import { PixelStore, union, type Box } from './pixels';
-import { arrayMask, combine, invertSelection, selectAll, shapeMask, type SelectMode, type Selection } from './selection';
+import { arrayMask, combine, invertSelection, refineSelection, selectAll, shapeMask, type Refine, type SelectMode, type Selection } from './selection';
 import { bucketFill, editSurface, gradientFill, healSurface, HealMask, hexToRgb, rgbToHex, Stroke, type CloneSource } from './tools';
 import { Adjuster } from './gl';
 import { contentSize, Stage, type Tool, type ToolPhase, type ToolPointer } from './Stage';
@@ -577,6 +577,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     const timer = setTimeout(() => work.current && setCurveHistogram(histogram(work.current)), 250);
     return () => clearTimeout(timer);
   }, [tab, version]);
+  // Text drawn before its font finished loading is redrawn once it has.
+  useEffect(() => {
+    const done = () => { cache.invalidate(); composited.current = null; setCubesVersion(v => v + 1); };
+    document.fonts.addEventListener('loadingdone', done);
+    return () => document.fonts.removeEventListener('loadingdone', done);
+  }, [cache]);
   // Imported LUTs are shared by every project.
   useEffect(() => {
     void readLuts().then(list => {
@@ -620,6 +626,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
     setSelection(command === 'all' ? selectAll(d.width, d.height) : command === 'none' ? null : invertSelection(selectionRef.current, d.width, d.height));
     bumpOverlay();
   }, [setSelection]);
+  const refine = useCallback((op: Refine, radius: number) => {
+    const sel = selectionRef.current;
+    if (!sel) return;
+    try { setSelection(refineSelection(sel, op, radius)); } catch (e) { onToast((e as Error).message); }
+    bumpOverlay();
+  }, [setSelection, onToast]);
   /** Fills the selection (or the whole surface) with a colour, or clears it when `color` is null. */
   const fillSelection = useCallback((color: string | null, label: string) => {
     const d = historyRef.current?.present;
@@ -854,7 +866,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings 
         <Stage doc={shown} image={before ? work.current : (version ? adjuster.canvas : null)} imageVersion={version + (before ? 0.5 : 0)} view={view} tool={tool} spaceHeld={space} checkerboard={prefs.checkerboard}
           aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
         {before && <div className="stage-badge">補正前</div>}
-        {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand}/>}
+        {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand} onRefine={refine}/>}
         {tool === 'crop' && <div className="crop-bar" role="toolbar" aria-label="切り抜き">
           <label className="select"><span>比率</span><select value={aspectId} onChange={e => chooseAspect(e.target.value)}>{ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
           <div className="crop-angle"><Slider label="角度" value={doc.geometry.angle} min={-MAX_ANGLE} max={MAX_ANGLE} step={0.1} format={v => `${v.toFixed(1)}°`} centered onChange={straighten} onCommit={endGesture} onReset={() => straighten(0)}/></div>

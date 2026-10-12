@@ -75,3 +75,22 @@ export function finish(mask: HTMLCanvasElement): Selection | null {
   edges.getContext('2d')!.putImageData(out, 0, 0);
   return { mask, edges, bounds: { x: Math.floor(box.x / k), y: Math.floor(box.y / k), w: Math.ceil(box.w / k), h: Math.ceil(box.h / k) } };
 }
+
+export type Refine = 'feather' | 'expand' | 'contract';
+/** Softens, grows or shrinks a selection by `radius` pixels (blur, then threshold for grow/shrink). */
+export function refineSelection(selection: Selection, op: Refine, radius: number): Selection | null {
+  const { width, height } = selection.mask;
+  const target = canvas(width, height);
+  const c = target.getContext('2d', { willReadFrequently: op !== 'feather' })!;
+  if (!('filter' in c)) throw new Error('このブラウザは選択範囲のぼかしに対応していません。');
+  c.filter = `blur(${op === 'feather' ? radius : radius / 2}px)`;
+  c.drawImage(selection.mask, 0, 0);
+  c.filter = 'none';
+  if (op !== 'feather') {
+    // A blurred edge at distance r falls to about 2% (grow) or rises to about 98% (shrink).
+    const data = c.getImageData(0, 0, width, height), d = data.data, limit = op === 'expand' ? 6 : 249;
+    for (let i = 3; i < d.length; i += 4) { const on = d[i] > limit; d[i - 3] = d[i - 2] = d[i - 1] = 255; d[i] = on ? 255 : 0; }
+    c.putImageData(data, 0, 0);
+  }
+  return finish(target);
+}

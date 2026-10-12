@@ -1,6 +1,7 @@
 import { ArrowLeftRight, Bandage, Blend, Brush, Circle, Crop, Eraser, Hand, Lasso, Move, PaintBucket, Pipette, Shapes, SquareDashed, Stamp, Type, WandSparkles, ZoomIn, type LucideIcon } from 'lucide-react';
 import type { BrushOptions } from './tools';
-import type { SelectMode } from './selection';
+import type { Refine, SelectMode } from './selection';
+import { useState } from 'react';
 import type { ShapeProps } from './document';
 import type { Tool } from './Stage';
 import { IconButton, Segmented, Slider, Toggle } from '../ui';
@@ -72,7 +73,8 @@ const HINTS: Partial<Record<Tool, string>> = {
   zoom: 'クリックで拡大、Alt+クリックで縮小',
 };
 
-export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectionCommand }: { tool: Tool; settings: ToolSettings; onChange: (patch: Partial<ToolSettings>) => void; hasSelection: boolean; onSelectionCommand: (command: 'all' | 'none' | 'invert') => void }) {
+export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectionCommand, onRefine }: { tool: Tool; settings: ToolSettings; onChange: (patch: Partial<ToolSettings>) => void; hasSelection: boolean; onSelectionCommand: (command: 'all' | 'none' | 'invert') => void; onRefine: (op: Refine, radius: number) => void }) {
+  const [radius, setRadius] = useState(8);
   if (tool === 'crop') return null;
   const brushKey = tool === 'eraser' || tool === 'heal' || tool === 'clone' ? tool : 'brush';
   const brush = settings[brushKey];
@@ -95,6 +97,12 @@ export function ToolOptions({ tool, settings, onChange, hasSelection, onSelectio
     <button type="button" className="btn ghost" onClick={() => onSelectionCommand('all')}>すべて選択</button>
     <button type="button" className="btn ghost" disabled={!hasSelection} onClick={() => onSelectionCommand('invert')}>反転</button>
     <button type="button" className="btn ghost" disabled={!hasSelection} onClick={() => onSelectionCommand('none')}>解除</button>
+    {hasSelection && <span className="refine" role="group" aria-label="選択範囲を調整">
+      <input type="number" className="num-input" min={1} max={500} value={radius} aria-label="調整する幅（px）" onChange={e => setRadius(Math.max(1, Math.min(500, Number(e.target.value) || 1)))}/><span className="options-hint">px</span>
+      <button type="button" className="btn ghost" onClick={() => onRefine('feather', radius)}>ぼかし</button>
+      <button type="button" className="btn ghost" onClick={() => onRefine('expand', radius)}>拡張</button>
+      <button type="button" className="btn ghost" onClick={() => onRefine('contract', radius)}>縮小</button>
+    </span>}
   </>;
   else if (tool === 'fill') body = <>
     <div className="opt-slider"><Slider label="許容値" value={settings.tolerance} min={0} max={255} onChange={tolerance => onChange({ tolerance })}/></div>

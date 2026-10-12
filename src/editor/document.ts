@@ -74,6 +74,8 @@ export function renderText(t: TextProps): HTMLCanvasElement {
   const probe = canvas(1, 1).getContext('2d')!;
   const font = `${t.italic ? 'italic ' : ''}${t.weight} ${t.size}px ${t.font}`;
   probe.font = font;
+  // Web fonts load on first use; the editor redraws text when loading finishes.
+  if (!document.fonts.check(font, t.content || ' ')) void document.fonts.load(font, t.content || ' ').catch(() => {});
   const lines = (t.content || ' ').split('\n');
   const step = t.size * t.lineHeight, pad = Math.ceil(t.size * 0.25);
   if (!t.vertical) {
@@ -140,6 +142,8 @@ export class LayerCache {
     }
     return { canvas: entry.canvas, x: layer.x + entry.dx, y: layer.y + entry.dy };
   }
+  /** Forgets rendered text and shapes (after fonts finish loading). */
+  invalidate() { this.entries.clear(); }
   /** Baked colour table for an adjustment layer (or the global settings under the id ''); null when it changes nothing. */
   lut(id: string, basic: Adjustments | null, color: ColorOps): BakedLut | null {
     const cube = color.lut ? this.cubes.get(color.lut.id) : undefined;
