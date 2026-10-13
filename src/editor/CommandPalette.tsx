@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CornerDownLeft, Search, type LucideIcon } from 'lucide-react';
 import { searchCommands } from '../lib/commands.mjs';
+import { t } from '../i18n/index.mjs';
 
 export interface Command {
   id: string; label: string; group: string;
@@ -28,7 +29,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
     // With nothing typed: recently used first, then a few everyday features.
     if (!query.trim()) {
       const shown = new Set(found.map(item => item.command.id));
-      for (const command of commands) if (found.length < 12 && !shown.has(command.id) && command.group !== 'ツール') found.push({ command, score: 0, span: null });
+      for (const command of commands) if (found.length < 12 && !shown.has(command.id) && command.group !== t('ツール')) found.push({ command, score: 0, span: null });
     }
     return found.slice(0, 50);
   }, [commands, query, recent]);
@@ -56,16 +57,16 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
     else if (event.key === 'Enter') { event.preventDefault(); run(active); }
   };
 
-  return <dialog ref={dialog} className="palette" data-leaving={leaving ? '' : undefined} aria-label="機能を検索"
+  return <dialog ref={dialog} className="palette" data-leaving={leaving ? '' : undefined} aria-label={t('機能を検索')}
     onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
     <div className="palette-field">
       <Search size={18} aria-hidden="true"/>
-      <input autoFocus value={query} placeholder="機能を検索（例: キャ、さいず、kya）" role="combobox" aria-expanded="true" aria-controls="palette-list"
+      <input autoFocus value={query} placeholder={t('機能を検索（例: キャ、さいず、kya）')} role="combobox" aria-expanded="true" aria-controls="palette-list"
         aria-activedescendant={results[active] ? `palette-${results[active].command.id}` : undefined} onChange={event => setQuery(event.target.value)} onKeyDown={onKey}/>
       <kbd className="kbd">Esc</kbd>
     </div>
-    <ul className="palette-list" id="palette-list" role="listbox" ref={list} aria-label="候補">
-      {!query.trim() && results.length > 0 && <li className="palette-heading" role="presentation">{recent.length ? '最近使った機能とおすすめ' : 'おすすめ'}</li>}
+    <ul className="palette-list" id="palette-list" role="listbox" ref={list} aria-label={t('候補')}>
+      {!query.trim() && results.length > 0 && <li className="palette-heading" role="presentation">{recent.length ? t('最近使った機能とおすすめ') : t('おすすめ')}</li>}
       {results.map(({ command, span }, index) => {
         const Icon = command.icon;
         const label = span ? <>{command.label.slice(0, span[0])}<mark>{command.label.slice(span[0], span[1])}</mark>{command.label.slice(span[1])}</> : command.label;
@@ -79,7 +80,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
           {index === active && !command.disabled && <CornerDownLeft className="palette-enter" size={14} aria-hidden="true"/>}
         </li>;
       })}
-      {query.trim() && !results.length && <li className="palette-empty" role="presentation">「{query}」に当てはまる機能はありません。別の言い方でも探せます（例: リサイズ、トリミング）。</li>}
+      {query.trim() && !results.length && <li className="palette-empty" role="presentation">{t('「{0}」に当てはまる機能はありません。別の言い方でも探せます（例: リサイズ、トリミング）。', query)}</li>}
     </ul>
   </dialog>;
 }

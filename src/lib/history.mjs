@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.mjs';
 /** Linear undo history of immutable document states.
  * @template T
  * @typedef {{ past: { state: T, label: string }[], present: T, label: string, future: { state: T, label: string }[] }} History */
@@ -5,7 +6,7 @@
 export const LIMIT = 500;
 
 /** @template T @param {T} state @param {string} [label] @returns {History<T>} */
-export function createHistory(state, label = '開く') { return { past: [], present: state, label, future: [] }; }
+export function createHistory(state, label = t('開く')) { return { past: [], present: state, label, future: [] }; }
 
 /** Records a new state. Consecutive changes with the same `mergeKey` (e.g. dragging one slider) collapse into one step.
  * @template T @param {History<T>} history @param {T} state @param {string} label @param {boolean} [merge] @returns {History<T>} */

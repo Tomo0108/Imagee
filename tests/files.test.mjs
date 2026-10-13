@@ -48,3 +48,8 @@ test('fileKind routes projects, Photoshop documents and images', () => {
   assert.equal(fileKind({ name: 'a.txt', type: 'text/plain' }), null);
   assert.ok(!isImageFile({ name: 'a.psd', type: 'image/vnd.adobe.photoshop' }));
 });
+
+test('normalizePreferences keeps known accents and languages only', () => {
+  assert.deepEqual(normalizePreferences({ accent: 'pink', lang: 'en' }), { ...defaults, accent: 'pink', lang: 'en' });
+  assert.deepEqual(normalizePreferences({ accent: 'red', lang: 'fr' }), defaults);
+});

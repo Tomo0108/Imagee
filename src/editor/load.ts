@@ -2,6 +2,7 @@ import { readPixels, readSource, type Project } from '../store';
 import { decode } from '../imaging';
 import { createDoc, maskKey, type Doc, type Layer, type RasterLayer } from './document';
 import type { PixelStore } from './pixels';
+import { t } from '../i18n/index.mjs';
 
 /** A new mask surface: `source` if given, otherwise fully visible (white). */
 export function createMask(store: PixelStore, key: string, width: number, height: number, source?: CanvasImageSource): number {
@@ -15,11 +16,11 @@ export function createMask(store: PixelStore, key: string, width: number, height
  *  `original` skips every edit, painting included, for the image as it was imported. */
 export async function loadDoc(project: Project, store: PixelStore, cancelled: () => boolean = () => false, original = false): Promise<Doc | null> {
   const blob = await readSource(project.id);
-  if (!blob) throw new Error('元の画像が見つかりません。ライブラリに追加し直してください。');
+  if (!blob) throw new Error(t('元の画像が見つかりません。ライブラリに追加し直してください。'));
   if (original) project = { ...project, edits: undefined };
   const [bitmap, pixels] = await Promise.all([decode(blob), original ? new Map<string, Blob>() : readPixels(project.id).catch(() => new Map<string, Blob>())]);
   if (cancelled()) { bitmap.close(); return null; }
-  const background: RasterLayer = { kind: 'raster', id: 'background', name: '背景', visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: 0 };
+  const background: RasterLayer = { kind: 'raster', id: 'background', name: t('背景'), visible: true, opacity: 100, blend: 'source-over', x: 0, y: 0, rev: 0 };
   const initial = createDoc(bitmap.width, bitmap.height, background, project.edits);
   const { width, height } = initial;
   const restore = async (key: string) => { const saved = pixels.get(key); return saved ? decode(saved).catch(() => undefined) : undefined; };

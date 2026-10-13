@@ -17,6 +17,34 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(url);
+  // The first run opens on the start screen with the guided tour.
+  await page.locator('.tour-card').waitFor();
+  assert.match(await page.locator('.tour-card h3').textContent(), /ようこそ/);
+  await page.screenshot({ path: `${out}/tour-welcome.png` });
+  await page.getByRole('button', { name: '次へ' }).click();
+  await page.waitForTimeout(800);
+  const ring = await page.locator('.tour-ring').boundingBox(), spot = await page.locator('[data-tour="home-open"]').boundingBox();
+  assert.ok(ring && spot && Math.abs(ring.x + 8 - spot.x) < 2 && Math.abs(ring.width - 16 - spot.width) < 2, 'the spotlight surrounds its target');
+  await page.screenshot({ path: `${out}/tour-home.png` });
+  for (let i = 0; i < 3; i++) await page.getByRole('button', { name: '次へ' }).click();
+  await page.getByRole('button', { name: 'はじめる' }).click();
+  await page.locator('.tour').waitFor({ state: 'detached' });
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('imagee-tours-seen'))), ['home']);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}/home-dark.png` });
+  // Settings sit behind the gear: accent colour, language and the tutorial again.
+  await page.locator('.settings-btn').click();
+  await page.getByRole('radio', { name: 'グリーン' }).click();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.accent), 'green');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}/settings-dark.png` });
+  await page.getByRole('radio', { name: 'バイオレット' }).click();
+  await page.getByRole('button', { name: 'チュートリアルをもう一度見る' }).click();
+  await page.locator('.tour-card').waitFor();
+  assert.match(await page.locator('.tour-card h3').textContent(), /ようこそ/, 'the tour replays from the start');
+  await page.keyboard.press('Escape');
+  await page.locator('.tour').waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'ライブラリ', exact: true }).click();
   await page.getByRole('heading', { name: '画像を追加して編集を始めましょう' }).waitFor();
   await page.screenshot({ path: `${out}/library-empty-dark.png` });
 
@@ -45,6 +73,13 @@ try {
 
   await page.getByRole('button', { name: '夕焼け.pngを開く' }).click();
   await page.locator('.stage canvas').waitFor();
+  // The editor introduces itself the first time it opens.
+  await page.locator('.tour-card').waitFor();
+  await page.getByRole('button', { name: '次へ' }).click();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${out}/tour-editor.png` });
+  await page.keyboard.press('Escape');
+  await page.locator('.tour').waitFor({ state: 'detached' });
   await page.waitForTimeout(300);
   const zoom = await page.locator('.zoom-readout').textContent();
   assert.notEqual(zoom, '100%', 'large image should open fitted to the window');
@@ -112,6 +147,21 @@ try {
   await page.locator('.palette input').fill('kya');
   assert.match(await page.locator('.palette-item.on').textContent(), /キャンバスサイズを変更/);
   await page.screenshot({ path: `${out}/palette-dark.png` });
+  await page.keyboard.press('Enter');
+  await page.getByRole('dialog', { name: 'キャンバスサイズ' }).waitFor();
+  // Common sizes are one click away.
+  await page.locator('.size-chip', { hasText: '4K' }).click();
+  assert.equal(await page.getByRole('spinbutton', { name: '幅' }).inputValue(), '3840');
+  assert.equal(await page.getByRole('spinbutton', { name: '高さ' }).inputValue(), '2160');
+  await page.getByRole('radio', { name: '縦' }).click();
+  assert.equal(await page.getByRole('spinbutton', { name: '幅' }).inputValue(), '2160');
+  await page.locator('.size-presets select').selectOption('a4');
+  assert.equal(await page.getByRole('spinbutton', { name: '高さ' }).inputValue(), '3508');
+  await page.screenshot({ path: `${out}/resize-presets-dark.png` });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+  await page.keyboard.press('Control+k');
+  await page.locator('.palette input').fill('きゃ');
   await page.keyboard.press('Enter');
   await page.getByRole('dialog', { name: 'キャンバスサイズ' }).waitFor();
   await page.getByRole('spinbutton', { name: '幅' }).fill('1800');
@@ -431,12 +481,40 @@ try {
   await page.waitForTimeout(300);
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();
+  await page.getByRole('button', { name: 'ライブラリ', exact: true }).click();
   await page.locator('.project').first().waitFor();
   await page.screenshot({ path: `${out}/library-grid-light.png` });
   await page.getByRole('button', { name: 'portrait.pngを開く' }).click();
   await page.locator('.stage canvas').waitFor();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${out}/editor-light.png` });
+  // Placing an image switches to the move tool; dragging it shows smart guides and snaps to the canvas centre.
+  await page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = c.height = 240;
+    const x = c.getContext('2d'); x.fillStyle = '#2a7fff'; x.fillRect(0, 0, 240, 240);
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    const data = new DataTransfer(); data.items.add(new File([blob], 'blue.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data }));
+  });
+  await page.waitForTimeout(600);
+  const stageBox = await page.locator('.stage').boundingBox();
+  const gx = stageBox.x + stageBox.width / 2, gy = stageBox.y + stageBox.height / 2;
+  await page.mouse.move(gx, gy);
+  await page.mouse.down();
+  await page.mouse.move(gx + 2, gy + 1, { steps: 2 });
+  await page.waitForTimeout(150);
+  const guidePixels = await page.evaluate(() => [...document.querySelectorAll('.stage canvas')].reduce((sum, canvas) => {
+    const c = canvas.getContext('2d', { willReadFrequently: true }); if (!c || !canvas.width) return sum;
+    const d = c.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 230 && d[i + 1] < 90 && d[i + 2] > 190 && d[i + 3] > 200) sum++;
+    return sum;
+  }, 0));
+  await page.screenshot({ path: `${out}/smart-guides-light.png` });
+  await page.mouse.up();
+  assert.ok(guidePixels > 50, `smart guides are drawn while moving (${guidePixels})`);
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
@@ -447,6 +525,26 @@ try {
   await page.waitForTimeout(300);
   await page.keyboard.press('b');
   await page.screenshot({ path: `${out}/editor-mobile-light.png` });
+
+  // English: the language setting translates the whole interface after a reload.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ ...JSON.parse(localStorage.getItem('imagee-preferences') || '{}'), lang: 'en' })));
+  await page.reload();
+  await page.locator('.home h1').waitFor();
+  assert.equal(await page.locator('.home h1').textContent(), 'Photo editing, right on this device.');
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+  await page.screenshot({ path: `${out}/home-en.png` });
+  await page.locator('.settings-btn').click();
+  await page.getByRole('dialog', { name: 'Settings' }).waitFor();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}/settings-en.png` });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+  await page.locator('.home-recent').first().click();
+  await page.locator('.stage canvas').waitFor();
+  await page.waitForTimeout(400);
+  assert.ok(await page.getByRole('button', { name: 'Back to Library' }).isVisible());
+  await page.screenshot({ path: `${out}/editor-en.png` });
 
   assert.deepEqual(errors, []);
   await browser.close();

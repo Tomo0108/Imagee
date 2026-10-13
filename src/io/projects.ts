@@ -7,6 +7,7 @@ import { cubeText, NEUTRAL_COLOR, parseCube } from '../lib/color.mjs';
 import { baseName } from '../lib/files.mjs';
 import { maskKey, newLayerId, type BlendMode, type Doc, type Layer, type LayerCache, type RasterLayer, type SavedEdits } from '../editor/document';
 import type { PixelStore } from '../editor/pixels';
+import { t } from '../i18n/index.mjs';
 
 /** What importing a file produces: a project, its original image, painted surfaces and any LUTs it uses. */
 export interface ImportedProject { project: Project; source: Blob; pixels: Map<string, Blob>; luts: StoredLut[] }
@@ -33,7 +34,7 @@ export async function exportImagee(project: Project, source: Blob, pixels: Map<s
 /** Packs a project from the library (its stored image, surfaces and the LUTs its edits use). */
 export async function exportStoredProject(project: Project): Promise<Blob> {
   const source = await readSource(project.id);
-  if (!source) throw new Error('元の画像が見つかりません。');
+  if (!source) throw new Error(t('元の画像が見つかりません。'));
   const pixels = await readPixels(project.id);
   const used = new Set<string>();
   const e = project.edits;
@@ -45,10 +46,10 @@ export async function exportStoredProject(project: Project): Promise<Blob> {
 
 export async function importImagee(file: File): Promise<ImportedProject> {
   let entries: Record<string, Uint8Array>;
-  try { entries = unzipSync(await bytes(file)); } catch { throw new Error(`「${file.name}」は Imagee プロジェクトとして読み込めませんでした。`); }
+  try { entries = unzipSync(await bytes(file)); } catch { throw new Error(t('「{0}」は Imagee プロジェクトとして読み込めませんでした。', file.name)); }
   const meta = entries['imagee.json'] && JSON.parse(strFromU8(entries['imagee.json']));
-  if (meta?.format !== 'imagee' || !entries[meta.source]) throw new Error(`「${file.name}」は Imagee プロジェクトではないか、壊れています。`);
-  if (meta.version > 1) throw new Error('この Imagee プロジェクトは新しいバージョンで作られています。アプリを更新してください。');
+  if (meta?.format !== 'imagee' || !entries[meta.source]) throw new Error(t('「{0}」は Imagee プロジェクトではないか、壊れています。', file.name));
+  if (meta.version > 1) throw new Error(t('この Imagee プロジェクトは新しいバージョンで作られています。アプリを更新してください。'));
   const type = Object.entries(EXTENSIONS).find(([, ext]) => meta.source.endsWith(`.${ext}`))?.[0] || 'image/png';
   const source = new Blob([entries[meta.source] as Uint8Array<ArrayBuffer>], { type });
   const pixels = new Map<string, Blob>(), luts: StoredLut[] = [];
@@ -102,7 +103,7 @@ interface PsdLayerLike {
 export async function importPsd(file: File): Promise<ImportedProject> {
   const { readPsd } = await import('ag-psd');
   let psd;
-  try { psd = readPsd(await file.arrayBuffer(), { skipThumbnail: true }); } catch { throw new Error(`「${file.name}」は PSD として読み込めませんでした。`); }
+  try { psd = readPsd(await file.arrayBuffer(), { skipThumbnail: true }); } catch { throw new Error(t('「{0}」は PSD として読み込めませんでした。', file.name)); }
   const { width, height } = psd;
   const pixels = new Map<string, Blob>(), layers: RasterLayer[] = [];
   /** A PSD mask as one of ours: full size, visibility in alpha. */
@@ -136,7 +137,7 @@ export async function importPsd(file: File): Promise<ImportedProject> {
       const surface = canvas(width, height);
       surface.getContext('2d')!.drawImage(item.canvas, item.left ?? 0, item.top ?? 0);
       pixels.set(id, await toBlob(surface, 'image/png'));
-      const layer: RasterLayer = { kind: 'raster', id, name: item.name || `レイヤー ${layers.length + 1}`, visible: shown, opacity: Math.round(alpha * 100), blend: PSD_BLEND[item.blendMode || 'normal'] || 'source-over', x: 0, y: 0, rev: 0 };
+      const layer: RasterLayer = { kind: 'raster', id, name: item.name || t('レイヤー {0}', layers.length + 1), visible: shown, opacity: Math.round(alpha * 100), blend: PSD_BLEND[item.blendMode || 'normal'] || 'source-over', x: 0, y: 0, rev: 0 };
       const clip = item.clipping && base ? [base.surface, base.mask] : [];
       const mask = intersect(own, inherited, ...clip);
       if (mask) {

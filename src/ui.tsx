@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { X, type LucideIcon } from 'lucide-react';
+import { t } from './i18n/index.mjs';
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -24,7 +25,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   return <dialog ref={ref} className={`modal${wide ? ' wide' : ''}`} aria-label={title}
     onCancel={e => { e.preventDefault(); dismiss(); }}
     onClick={e => { if (e.target !== e.currentTarget) return; const r = e.currentTarget.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dismiss(); }}>
-    <div className="modal-head"><h2>{title}</h2><IconButton icon={X} label="閉じる" onClick={dismiss}/></div>
+    <div className="modal-head"><h2>{title}</h2><IconButton icon={X} label={t('閉じる')} onClick={dismiss}/></div>
     {children}
   </dialog>;
 }
@@ -61,7 +62,7 @@ export function Slider({ label, value, min, max, step = 1, unit = '', onChange, 
   const percent = ((value - min) / (max - min)) * 100;
   // Bipolar sliders fill from the centre so the neutral point is obvious.
   const from = centered ? Math.min(50, percent) : 0, to = centered ? Math.max(50, percent) : percent;
-  return <label className={`slider${centered && value !== 0 ? ' changed' : ''}`} onDoubleClick={onReset ? () => { onReset(); onCommit?.(); } : undefined} title={onReset ? 'ダブルクリックでリセット' : undefined}>
+  return <label className={`slider${centered && value !== 0 ? ' changed' : ''}`} onDoubleClick={onReset ? () => { onReset(); onCommit?.(); } : undefined} title={onReset ? t('ダブルクリックでリセット') : undefined}>
     <span className="slider-head"><span>{label}</span><output className="num">{format ? format(value) : `${value}${unit}`}</output></span>
     <input type="range" min={min} max={max} step={step} value={value} aria-label={label} style={{ '--from': `${from}%`, '--to': `${to}%` } as React.CSSProperties}
       onChange={e => onChange(Number(e.target.value))} onPointerUp={onCommit} onKeyUp={onCommit}/>

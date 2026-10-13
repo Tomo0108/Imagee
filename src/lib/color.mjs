@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.mjs';
 /** Colour operations beyond the basic sliders: levels, tone curves, HSL per colour band and 3D LUTs.
  * They are all per-pixel colour functions, so the editor bakes them (together with the basic adjustments when
  * used as an adjustment layer) into one 3D lookup table that the GPU samples.
@@ -12,14 +13,14 @@
 
 /** @type {{ id: string, label: string, hue: number, swatch: string }[]} */
 export const BANDS = [
-  { id: 'red', label: 'レッド', hue: 0, swatch: '#ff453a' },
-  { id: 'orange', label: 'オレンジ', hue: 30, swatch: '#ff9f0a' },
-  { id: 'yellow', label: 'イエロー', hue: 60, swatch: '#ffd60a' },
-  { id: 'green', label: 'グリーン', hue: 120, swatch: '#30d158' },
-  { id: 'aqua', label: 'アクア', hue: 180, swatch: '#64d2ff' },
-  { id: 'blue', label: 'ブルー', hue: 240, swatch: '#0a84ff' },
-  { id: 'purple', label: 'パープル', hue: 270, swatch: '#bf5af2' },
-  { id: 'magenta', label: 'マゼンタ', hue: 300, swatch: '#ff375f' },
+  { id: 'red', label: t('レッド'), hue: 0, swatch: '#ff453a' },
+  { id: 'orange', label: t('オレンジ'), hue: 30, swatch: '#ff9f0a' },
+  { id: 'yellow', label: t('イエロー'), hue: 60, swatch: '#ffd60a' },
+  { id: 'green', label: t('グリーン'), hue: 120, swatch: '#30d158' },
+  { id: 'aqua', label: t('アクア'), hue: 180, swatch: '#64d2ff' },
+  { id: 'blue', label: t('ブルー'), hue: 240, swatch: '#0a84ff' },
+  { id: 'purple', label: t('パープル'), hue: 270, swatch: '#bf5af2' },
+  { id: 'magenta', label: t('マゼンタ'), hue: 300, swatch: '#ff375f' },
 ];
 
 /** @returns {CurvePoint[]} */
@@ -138,12 +139,12 @@ export function parseCube(text) {
     const [key, ...rest] = lineText.split(/\s+/);
     if (key === 'TITLE') title = lineText.slice(5).trim().replace(/^"|"$/g, '');
     else if (key === 'LUT_3D_SIZE') size = Number(rest[0]);
-    else if (key === 'LUT_1D_SIZE') throw new Error('1D LUT には対応していません。3D LUT（.cube）を選んでください。');
+    else if (key === 'LUT_1D_SIZE') throw new Error(t('1D LUT には対応していません。3D LUT（.cube）を選んでください。'));
     // DOMAIN_MIN / DOMAIN_MAX other than 0..1 are rare for display LUTs and are treated as 0..1.
     else if (/^[-+.\d]/.test(key)) values.push(Number(key), Number(rest[0]), Number(rest[1]));
   }
-  if (!size || size < 2 || size > 128) throw new Error('LUT のサイズを読み取れませんでした。');
-  if (values.length !== size * size * size * 3 || values.some(v => !Number.isFinite(v))) throw new Error('LUT のデータ数が正しくありません。');
+  if (!size || size < 2 || size > 128) throw new Error(t('LUT のサイズを読み取れませんでした。'));
+  if (values.length !== size * size * size * 3 || values.some(v => !Number.isFinite(v))) throw new Error(t('LUT のデータ数が正しくありません。'));
   return { size, data: new Float32Array(values.map(clamp01)), title };
 }
 

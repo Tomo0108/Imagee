@@ -2,11 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { centered, fitScale, zoomAt, type View } from '../lib/viewport.mjs';
 import { apply, clampRect, effectiveCrop, invert, orientedSize, outputSize, resizeCrop, sourceMatrix, type Rect } from '../lib/geometry.mjs';
 import { applySourceTransform, drawGeometry, type Doc } from './document';
+import { t } from '../i18n/index.mjs';
 
 export type Tool = 'move' | 'marquee' | 'ellipse' | 'lasso' | 'wand' | 'brush' | 'eraser' | 'heal' | 'remove' | 'clone' | 'fill' | 'gradient' | 'eyedropper' | 'text' | 'shape' | 'crop' | 'hand' | 'zoom';
 export type ToolPhase = 'down' | 'move' | 'up' | 'hover';
 /** Pointer position in document pixels, with pen pressure and modifier keys. */
-export interface ToolPointer { x: number; y: number; pressure: number; pointerType: string; shift: boolean; alt: boolean }
+export interface ToolPointer { x: number; y: number; pressure: number; pointerType: string; shift: boolean; alt: boolean; mod?: boolean }
 
 interface Props {
   doc: Doc; image: HTMLCanvasElement | null; imageVersion: number; view: View | null; tool: Tool; spaceHeld: boolean; checkerboard: 'light' | 'dark';
@@ -146,7 +147,7 @@ export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checker
     if (!v) return null;
     const out = { x: (point.x - v.x) / v.scale, y: (point.y - v.y) / v.scale };
     const p = apply(invert(sourceMatrix(doc.geometry, doc.width, doc.height, 'output')), out.x, out.y);
-    return { x: p.x, y: p.y, pressure: event.pressure, pointerType: event.pointerType, shift: event.shiftKey, alt: event.altKey };
+    return { x: p.x, y: p.y, pressure: event.pressure, pointerType: event.pointerType, shift: event.shiftKey, alt: event.altKey, mod: event.ctrlKey || event.metaKey };
   };
   const hitCrop = (point: { x: number; y: number }) => {
     const v = viewRef.current;
@@ -244,6 +245,6 @@ export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checker
   return <div ref={host} className="stage" style={{ cursor }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp}
     onPointerLeave={() => { onCursor(null); setHover(''); if (!pointers.current.size) onTool('hover', null); }}
     onDoubleClick={() => { if (tool === 'hand') onView(centered(content.width, content.height, size.width, size.height, fitScale(content.width, content.height, size.width, size.height))); }}>
-    <canvas ref={canvas} aria-label="キャンバス" role="img"/>
+    <canvas ref={canvas} aria-label={t('キャンバス')} role="img"/>
   </div>;
 }

@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.mjs';
 /** Object removal: fills a hole with texture from the rest of the image (exemplar-based image completion).
  *
  * Multi-scale, after Wexler et al. "Space-Time Completion" with PatchMatch (Barnes et al.) for the nearest-neighbour search:
@@ -36,7 +37,7 @@ export function inpaint(data, width, height, weights, options = {}) {
   dilate(hole, cw, ch);
   let known = 0;
   for (let i = 0; i < hole.length; i++) if (!hole[i]) known++;
-  if (known < (2 * P + 1) ** 2) throw new Error('周りに参照できる部分がないため、埋められません。消したい部分だけを選んでください。');
+  if (known < (2 * P + 1) ** 2) throw new Error(t('周りに参照できる部分がないため、埋められません。消したい部分だけを選んでください。'));
 
   // Pyramid: halve until the hole is at most a few patches across.
   /** @type {{ image: Float32Array, hole: Uint8Array, w: number, h: number }[]} */

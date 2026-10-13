@@ -1,20 +1,21 @@
+import { t } from '../i18n/index.mjs';
 /** Global tone and colour adjustments. The same maths runs in the WebGL shader (src/editor/gl.ts);
  * this JS version is the reference, the CPU fallback, and what the tests check.
  * @typedef {{ exposure: number, contrast: number, highlights: number, shadows: number, whites: number, blacks: number, temperature: number, tint: number, vibrance: number, saturation: number, vignette: number }} Adjustments */
 
 /** @type {{ key: keyof Adjustments, label: string, min: number, max: number, step: number, group: 'light'|'color'|'effects' }[]} */
 export const CONTROLS = [
-  { key: 'exposure', label: '露光量', min: -4, max: 4, step: 0.05, group: 'light' },
-  { key: 'contrast', label: 'コントラスト', min: -100, max: 100, step: 1, group: 'light' },
-  { key: 'highlights', label: 'ハイライト', min: -100, max: 100, step: 1, group: 'light' },
-  { key: 'shadows', label: 'シャドウ', min: -100, max: 100, step: 1, group: 'light' },
-  { key: 'whites', label: '白レベル', min: -100, max: 100, step: 1, group: 'light' },
-  { key: 'blacks', label: '黒レベル', min: -100, max: 100, step: 1, group: 'light' },
-  { key: 'temperature', label: '色温度', min: -100, max: 100, step: 1, group: 'color' },
-  { key: 'tint', label: '色かぶり補正', min: -100, max: 100, step: 1, group: 'color' },
-  { key: 'vibrance', label: '自然な彩度', min: -100, max: 100, step: 1, group: 'color' },
-  { key: 'saturation', label: '彩度', min: -100, max: 100, step: 1, group: 'color' },
-  { key: 'vignette', label: '周辺光量', min: -100, max: 100, step: 1, group: 'effects' },
+  { key: 'exposure', label: t('露光量'), min: -4, max: 4, step: 0.05, group: 'light' },
+  { key: 'contrast', label: t('コントラスト'), min: -100, max: 100, step: 1, group: 'light' },
+  { key: 'highlights', label: t('ハイライト'), min: -100, max: 100, step: 1, group: 'light' },
+  { key: 'shadows', label: t('シャドウ'), min: -100, max: 100, step: 1, group: 'light' },
+  { key: 'whites', label: t('白レベル'), min: -100, max: 100, step: 1, group: 'light' },
+  { key: 'blacks', label: t('黒レベル'), min: -100, max: 100, step: 1, group: 'light' },
+  { key: 'temperature', label: t('色温度'), min: -100, max: 100, step: 1, group: 'color' },
+  { key: 'tint', label: t('色かぶり補正'), min: -100, max: 100, step: 1, group: 'color' },
+  { key: 'vibrance', label: t('自然な彩度'), min: -100, max: 100, step: 1, group: 'color' },
+  { key: 'saturation', label: t('彩度'), min: -100, max: 100, step: 1, group: 'color' },
+  { key: 'vignette', label: t('周辺光量'), min: -100, max: 100, step: 1, group: 'effects' },
 ];
 
 /** @type {Adjustments} */

@@ -4,6 +4,7 @@ import * as ort from 'onnxruntime-web/webgpu';
 import wasm from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url';
 import mjs from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url';
 import { segmentInput, tiles } from '../lib/matte.mjs';
+import { t } from '../i18n/index.mjs';
 
 ort.env.wasm.wasmPaths = { wasm, mjs };
 ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
@@ -20,7 +21,7 @@ function session(url: string) {
   if (!entry) {
     entry = (async () => {
       const response = await fetch(url);
-      if (!response.ok) throw new Error('AI モデルを読み込めませんでした。');
+      if (!response.ok) throw new Error(t('AI モデルを読み込めませんでした。'));
       const model = new Uint8Array(await response.arrayBuffer());
       const gpu = 'gpu' in navigator && !!(await (navigator as Navigator & { gpu: { requestAdapter(): Promise<unknown> } }).gpu.requestAdapter().catch(() => null));
       if (gpu) {

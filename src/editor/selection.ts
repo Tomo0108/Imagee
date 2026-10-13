@@ -1,6 +1,7 @@
 import { canvas } from '../imaging';
 import { maskBounds } from '../lib/flood.mjs';
 import type { Box } from './pixels';
+import { t } from '../i18n/index.mjs';
 
 export type SelectMode = 'new' | 'add' | 'subtract' | 'intersect';
 export type SelectShape = { kind: 'rect' | 'ellipse'; box: Box } | { kind: 'lasso'; points: { x: number; y: number }[] };
@@ -82,7 +83,7 @@ export function refineSelection(selection: Selection, op: Refine, radius: number
   const { width, height } = selection.mask;
   const target = canvas(width, height);
   const c = target.getContext('2d', { willReadFrequently: op !== 'feather' })!;
-  if (!('filter' in c)) throw new Error('このブラウザは選択範囲のぼかしに対応していません。');
+  if (!('filter' in c)) throw new Error(t('このブラウザは選択範囲のぼかしに対応していません。'));
   c.filter = `blur(${op === 'feather' ? radius : radius / 2}px)`;
   c.drawImage(selection.mask, 0, 0);
   c.filter = 'none';

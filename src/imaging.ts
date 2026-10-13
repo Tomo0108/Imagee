@@ -1,8 +1,9 @@
 import type { Project } from './store';
+import { t } from './i18n/index.mjs';
 
 export async function decode(blob: Blob): Promise<ImageBitmap> {
   try { return await createImageBitmap(blob, { imageOrientation: 'from-image' }); }
-  catch { throw new Error('この画像は読み込めませんでした。ファイルが壊れているか、未対応の形式です。'); }
+  catch { throw new Error(t('この画像は読み込めませんでした。ファイルが壊れているか、未対応の形式です。')); }
 }
 
 export function canvas(width: number, height: number) {
@@ -12,7 +13,7 @@ export function canvas(width: number, height: number) {
 }
 
 export function toBlob(source: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
-  return new Promise((resolve, reject) => source.toBlob(blob => blob ? resolve(blob) : reject(new Error('書き出しに失敗しました。')), type, quality));
+  return new Promise((resolve, reject) => source.toBlob(blob => blob ? resolve(blob) : reject(new Error(t('書き出しに失敗しました。'))), type, quality));
 }
 
 export async function thumbnail(bitmap: ImageBitmap, max = 480): Promise<Blob> {
@@ -28,7 +29,7 @@ export async function createProject(file: File): Promise<{ project: Project; sou
   const bitmap = await decode(file);
   try {
     const now = Date.now();
-    const project: Project = { id: crypto.randomUUID(), name: file.name || '貼り付けた画像.png', type: file.type || 'image/png', size: file.size, width: bitmap.width, height: bitmap.height, added: now, opened: 0, favorite: false, thumbnail: await thumbnail(bitmap) };
+    const project: Project = { id: crypto.randomUUID(), name: file.name || t('貼り付けた画像.png'), type: file.type || 'image/png', size: file.size, width: bitmap.width, height: bitmap.height, added: now, opened: 0, favorite: false, thumbnail: await thumbnail(bitmap) };
     return { project, source: file };
   } finally { bitmap.close(); }
 }

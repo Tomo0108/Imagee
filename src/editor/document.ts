@@ -4,21 +4,22 @@ import { effectiveCrop, IDENTITY, sourceMatrix, type Geometry } from '../lib/geo
 import { canvas } from '../imaging';
 import type { Box, PixelStore } from './pixels';
 import { lutPass, type BakedLut } from './lut';
+import { t } from '../i18n/index.mjs';
 
 export type BlendMode = 'source-over' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
 export const BLEND_MODES: { value: BlendMode; label: string }[] = [
-  { value: 'source-over', label: '通常' }, { value: 'multiply', label: '乗算' }, { value: 'screen', label: 'スクリーン' }, { value: 'overlay', label: 'オーバーレイ' },
-  { value: 'darken', label: '比較（暗）' }, { value: 'lighten', label: '比較（明）' }, { value: 'color-dodge', label: '覆い焼きカラー' }, { value: 'color-burn', label: '焼き込みカラー' },
-  { value: 'hard-light', label: 'ハードライト' }, { value: 'soft-light', label: 'ソフトライト' }, { value: 'difference', label: '差の絶対値' }, { value: 'exclusion', label: '除外' },
-  { value: 'hue', label: '色相' }, { value: 'saturation', label: '彩度' }, { value: 'color', label: 'カラー' }, { value: 'luminosity', label: '輝度' },
+  { value: 'source-over', label: t('通常') }, { value: 'multiply', label: t('乗算') }, { value: 'screen', label: t('スクリーン') }, { value: 'overlay', label: t('オーバーレイ') },
+  { value: 'darken', label: t('比較（暗）') }, { value: 'lighten', label: t('比較（明）') }, { value: 'color-dodge', label: t('覆い焼きカラー') }, { value: 'color-burn', label: t('焼き込みカラー') },
+  { value: 'hard-light', label: t('ハードライト') }, { value: 'soft-light', label: t('ソフトライト') }, { value: 'difference', label: t('差の絶対値') }, { value: 'exclusion', label: t('除外') },
+  { value: 'hue', label: t('色相') }, { value: 'saturation', label: t('彩度') }, { value: 'color', label: t('カラー') }, { value: 'luminosity', label: t('輝度') },
 ];
 
 export const FONTS = [
-  { value: "'Noto Sans JP Variable', sans-serif", label: 'ゴシック（Noto Sans JP）' },
+  { value: "'Noto Sans JP Variable', sans-serif", label: t('ゴシック（Noto Sans JP）') },
   { value: "'Inter Variable', 'Noto Sans JP Variable', sans-serif", label: 'Inter' },
-  { value: "'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', serif", label: '明朝' },
-  { value: "'Hiragino Maru Gothic ProN', 'BIZ UDGothic', 'Noto Sans JP Variable', sans-serif", label: '丸ゴシック' },
-  { value: "ui-monospace, 'SF Mono', Consolas, monospace", label: '等幅' },
+  { value: "'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', serif", label: t('明朝') },
+  { value: "'Hiragino Maru Gothic ProN', 'BIZ UDGothic', 'Noto Sans JP Variable', sans-serif", label: t('丸ゴシック') },
+  { value: "ui-monospace, 'SF Mono', Consolas, monospace", label: t('等幅') },
 ];
 export interface TextProps { content: string; font: string; size: number; weight: 400 | 700; italic: boolean; color: string; align: 'left' | 'center' | 'right'; vertical: boolean; lineHeight: number }
 export interface ShapeProps { type: 'rect' | 'ellipse' | 'line'; w: number; h: number; fill: string | null; stroke: string | null; strokeWidth: number; radius: number }

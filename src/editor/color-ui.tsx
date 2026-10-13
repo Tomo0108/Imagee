@@ -7,6 +7,7 @@ import type { Histogram } from '../imaging';
 import { canvas as makeCanvas } from '../imaging';
 import { colorStage } from './document';
 import { IconButton, Segmented, Slider } from '../ui';
+import { t } from '../i18n/index.mjs';
 
 type Channel = keyof Curves;
 const CHANNEL_COLOR: Record<Channel, string> = { rgb: 'var(--label)', r: '#ff453a', g: '#30d158', b: '#0a84ff' };
@@ -59,10 +60,10 @@ export function CurveEditor({ curves, histogram, onChange, onCommit }: { curves:
   }, [histogram, channel]);
   return <div className="curve-editor">
     <div className="curve-head">
-      <Segmented label="チャンネル" value={channel} onChange={setChannel} options={(['rgb', 'r', 'g', 'b'] as Channel[]).map(c => ({ value: c, label: <span style={{ color: c === 'rgb' ? undefined : CHANNEL_COLOR[c] }}>{c === 'rgb' ? 'RGB' : c.toUpperCase()}{!isLine(curves[c]) && '•'}</span> }))}/>
-      <button type="button" className="btn ghost small" disabled={isLine(points)} onClick={() => { set([[0, 0], [1, 1]], false); onCommit(); }}>リセット</button>
+      <Segmented label={t('チャンネル')} value={channel} onChange={setChannel} options={(['rgb', 'r', 'g', 'b'] as Channel[]).map(c => ({ value: c, label: <span style={{ color: c === 'rgb' ? undefined : CHANNEL_COLOR[c] }}>{c === 'rgb' ? 'RGB' : c.toUpperCase()}{!isLine(curves[c]) && '•'}</span> }))}/>
+      <button type="button" className="btn ghost small" disabled={isLine(points)} onClick={() => { set([[0, 0], [1, 1]], false); onCommit(); }}>{t('リセット')}</button>
     </div>
-    <svg ref={svg} viewBox="0 0 256 256" className="curve-graph" role="img" aria-label={`トーンカーブ（${channel === 'rgb' ? 'RGB' : channel.toUpperCase()}）`}
+    <svg ref={svg} viewBox="0 0 256 256" className="curve-graph" role="img" aria-label={t('トーンカーブ（{0}）', channel === 'rgb' ? 'RGB' : channel.toUpperCase())}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
       onDoubleClick={event => { const i = hit(local(event)); if (i > 0 && i < points.length - 1) { set(points.filter((_, j) => j !== i), false); onCommit(); } }}>
       {histo && <path d={histo} className="curve-histogram"/>}
@@ -78,11 +79,11 @@ export function LevelsEditor({ levels, onChange, onCommit }: { levels: Levels; o
   const set = (patch: Partial<Levels>) => onChange({ ...levels, ...patch }, true);
   return <div className="levels-editor">
     <div className="levels-ramp" aria-hidden="true"><span style={{ left: `${levels.inBlack / 2.55}%` }}/><span style={{ left: `${levels.inWhite / 2.55}%` }}/></div>
-    <Slider label="入力：黒" value={levels.inBlack} min={0} max={Math.min(253, levels.inWhite - 2)} onChange={inBlack => set({ inBlack })} onCommit={onCommit} onReset={() => set({ inBlack: 0 })}/>
-    <Slider label="ガンマ" value={levels.gamma} min={0.1} max={9.99} step={0.01} format={v => v.toFixed(2)} onChange={gamma => set({ gamma })} onCommit={onCommit} onReset={() => set({ gamma: 1 })}/>
-    <Slider label="入力：白" value={levels.inWhite} min={Math.max(2, levels.inBlack + 2)} max={255} onChange={inWhite => set({ inWhite })} onCommit={onCommit} onReset={() => set({ inWhite: 255 })}/>
-    <Slider label="出力：黒" value={levels.outBlack} min={0} max={255} onChange={outBlack => set({ outBlack })} onCommit={onCommit} onReset={() => set({ outBlack: 0 })}/>
-    <Slider label="出力：白" value={levels.outWhite} min={0} max={255} onChange={outWhite => set({ outWhite })} onCommit={onCommit} onReset={() => set({ outWhite: 255 })}/>
+    <Slider label={t('入力：黒')} value={levels.inBlack} min={0} max={Math.min(253, levels.inWhite - 2)} onChange={inBlack => set({ inBlack })} onCommit={onCommit} onReset={() => set({ inBlack: 0 })}/>
+    <Slider label={t('ガンマ')} value={levels.gamma} min={0.1} max={9.99} step={0.01} format={v => v.toFixed(2)} onChange={gamma => set({ gamma })} onCommit={onCommit} onReset={() => set({ gamma: 1 })}/>
+    <Slider label={t('入力：白')} value={levels.inWhite} min={Math.max(2, levels.inBlack + 2)} max={255} onChange={inWhite => set({ inWhite })} onCommit={onCommit} onReset={() => set({ inWhite: 255 })}/>
+    <Slider label={t('出力：黒')} value={levels.outBlack} min={0} max={255} onChange={outBlack => set({ outBlack })} onCommit={onCommit} onReset={() => set({ outBlack: 0 })}/>
+    <Slider label={t('出力：白')} value={levels.outWhite} min={0} max={255} onChange={outWhite => set({ outWhite })} onCommit={onCommit} onReset={() => set({ outWhite: 255 })}/>
   </div>;
 }
 
@@ -92,13 +93,13 @@ export function HslEditor({ hsl, onChange, onCommit }: { hsl: ColorOps['hsl']; o
   const set = (patch: Partial<typeof shift>, gesture = true) => onChange({ ...hsl, [band]: { ...shift, ...patch } }, gesture);
   const label = BANDS.find(b => b.id === band)!.label;
   return <div className="hsl-editor">
-    <div className="hsl-bands" role="radiogroup" aria-label="色の範囲">
+    <div className="hsl-bands" role="radiogroup" aria-label={t('色の範囲')}>
       {BANDS.map(b => { const s = hsl[b.id]; const changed = s.h || s.s || s.l;
         return <button key={b.id} type="button" role="radio" aria-checked={band === b.id} title={b.label} aria-label={b.label} className={`hsl-band${band === b.id ? ' on' : ''}${changed ? ' changed' : ''}`} style={{ background: b.swatch }} onClick={() => setBand(b.id)}/>; })}
     </div>
-    <Slider label={`${label}：色相`} value={shift.h} min={-100} max={100} centered onChange={h => set({ h })} onCommit={onCommit} onReset={() => set({ h: 0 }, false)}/>
-    <Slider label={`${label}：彩度`} value={shift.s} min={-100} max={100} centered onChange={s => set({ s })} onCommit={onCommit} onReset={() => set({ s: 0 }, false)}/>
-    <Slider label={`${label}：輝度`} value={shift.l} min={-100} max={100} centered onChange={l => set({ l })} onCommit={onCommit} onReset={() => set({ l: 0 }, false)}/>
+    <Slider label={t('{0}：色相', label)} value={shift.h} min={-100} max={100} centered onChange={h => set({ h })} onCommit={onCommit} onReset={() => set({ h: 0 }, false)}/>
+    <Slider label={t('{0}：彩度', label)} value={shift.s} min={-100} max={100} centered onChange={s => set({ s })} onCommit={onCommit} onReset={() => set({ s: 0 }, false)}/>
+    <Slider label={t('{0}：輝度', label)} value={shift.l} min={-100} max={100} centered onChange={l => set({ l })} onCommit={onCommit} onReset={() => set({ l: 0 }, false)}/>
   </div>;
 }
 
@@ -107,14 +108,14 @@ export function LutPicker({ lut, cubes, onChange, onCommit, onImport, onRemove }
   return <div className="lut-picker">
     <div className="field"><span>LUT</span><span className="field-row">
       <select value={lut?.id || ''} aria-label="LUT" onChange={e => onChange(e.target.value ? { id: e.target.value, amount: lut?.amount ?? 100 } : null, false)}>
-        <option value="">なし</option>
+        <option value="">{t('なし')}</option>
         {cubes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        {missing && <option value={lut.id}>（見つかりません）</option>}
+        {missing && <option value={lut.id}>{t('（見つかりません）')}</option>}
       </select>
-      <IconButton icon={FileUp} label=".cube ファイルを読み込む" size={16} onClick={onImport}/>
-      {lut && !missing && <IconButton icon={Trash2} label="この LUT をライブラリから削除" size={16} onClick={() => onRemove(lut.id)}/>}
+      <IconButton icon={FileUp} label={t('.cube ファイルを読み込む')} size={16} onClick={onImport}/>
+      {lut && !missing && <IconButton icon={Trash2} label={t('この LUT をライブラリから削除')} size={16} onClick={() => onRemove(lut.id)}/>}
     </span></div>
-    {lut && <Slider label="適用量" value={lut.amount} min={0} max={100} unit="%" onChange={amount => onChange({ ...lut, amount }, true)} onCommit={onCommit}/>}
+    {lut && <Slider label={t('適用量')} value={lut.amount} min={0} max={100} unit="%" onChange={amount => onChange({ ...lut, amount }, true)} onCommit={onCommit}/>}
   </div>;
 }
 
@@ -160,20 +161,20 @@ export function PresetStrip({ source, version, current, onApply, userPresets, on
   const builtIn = useMemo(() => PRESETS.map(p => ({ id: p.id, name: p.name, ...presetState(p) })), []);
   const same = (a: { basic: Adjustments; color: ColorOps }) => JSON.stringify([a.basic, a.color]) === JSON.stringify([current.basic, current.color]);
   return <div className="presets">
-    <div className="preset-strip" role="list" aria-label="プリセット">
+    <div className="preset-strip" role="list" aria-label={t('プリセット')}>
       {[...userPresets, ...builtIn].map(p => <div key={p.id} role="listitem" className={`preset${same(p) ? ' on' : ''}`}>
-        <button type="button" className="preset-main" title={`${p.name}を適用`} onClick={() => onApply({ basic: p.basic, color: p.color }, p.name)}>
+        <button type="button" className="preset-main" title={t('{0}を適用', p.name)} onClick={() => onApply({ basic: p.basic, color: p.color }, p.name)}>
           <PresetThumb preview={preview} basic={p.basic} color={p.color}/><span>{p.name}</span>
         </button>
-        {userPresets.includes(p as UserPreset) && <button type="button" className="preset-delete" aria-label={`${p.name}を削除`} title="削除" onClick={() => onDelete(p.id)}><X size={11} aria-hidden="true"/></button>}
+        {userPresets.includes(p as UserPreset) && <button type="button" className="preset-delete" aria-label={t('{0}を削除', p.name)} title={t('削除')} onClick={() => onDelete(p.id)}><X size={11} aria-hidden="true"/></button>}
       </div>)}
     </div>
     {naming
       ? <form className="preset-save" onSubmit={e => { e.preventDefault(); const name = new FormData(e.currentTarget).get('name')?.toString().trim(); if (name) onSave(name); setNaming(false); }}>
-          <input name="name" autoFocus placeholder="プリセット名" aria-label="プリセット名" maxLength={40}/>
-          <button type="submit" className="btn small primary">保存</button>
-          <button type="button" className="btn small ghost" onClick={() => setNaming(false)}>やめる</button>
+          <input name="name" autoFocus placeholder={t('プリセット名')} aria-label={t('プリセット名')} maxLength={40}/>
+          <button type="submit" className="btn small primary">{t('保存')}</button>
+          <button type="button" className="btn small ghost" onClick={() => setNaming(false)}>{t('やめる')}</button>
         </form>
-      : <button type="button" className="btn ghost small" onClick={() => setNaming(true)}><Plus size={14} aria-hidden="true"/>現在の設定をプリセットに保存</button>}
+      : <button type="button" className="btn ghost small" onClick={() => setNaming(true)}><Plus size={14} aria-hidden="true"/>{t('現在の設定をプリセットに保存')}</button>}
   </div>;
 }

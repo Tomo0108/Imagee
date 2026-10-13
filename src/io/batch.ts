@@ -9,6 +9,7 @@ import { drawGeometry, LayerCache, type Doc } from '../editor/document';
 import { PixelStore } from '../editor/pixels';
 import { loadDoc } from '../editor/load';
 import { renderDocument } from '../editor/render';
+import { t } from '../i18n/index.mjs';
 
 export interface BatchOutput { name: string; blob: Blob }
 export interface BatchProgress { done: number; total: number; current: string; failed: string[] }
@@ -57,7 +58,7 @@ async function render(doc: Doc, store: PixelStore, cache: LayerCache, recipe: Re
   drawWatermark(context, size.width, size.height, recipe.watermark);
   const blob = await toBlob(target, format.mime, format.lossy ? recipe.quality / 100 : undefined);
   adjusted.width = adjusted.height = full.width = full.height = target.width = target.height = 0;
-  if (blob.type !== format.mime) throw new Error(`このブラウザは${format.label}の書き出しに対応していません。`);
+  if (blob.type !== format.mime) throw new Error(t('このブラウザは{0}の書き出しに対応していません。', format.label));
   return blob;
 }
 

@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.mjs';
 /** Non-destructive geometry: quarter turns and flips give the "oriented" frame (W×H); the image is then
  * rotated by `angle` degrees about the frame centre, and `crop` (in frame coordinates) is the output.
  * @typedef {{ x: number, y: number, w: number, h: number }} Rect
@@ -7,8 +8,8 @@
 export const IDENTITY = { quarter: 0, flipH: false, flipV: false, angle: 0, crop: null };
 export const MAX_ANGLE = 45;
 export const ASPECTS = [
-  { id: 'free', label: '自由', ratio: 0 },
-  { id: 'original', label: '元の比率', ratio: -1 },
+  { id: 'free', label: t('自由'), ratio: 0 },
+  { id: 'original', label: t('元の比率'), ratio: -1 },
   { id: '1:1', label: '1:1', ratio: 1 },
   { id: '4:5', label: '4:5', ratio: 4 / 5 },
   { id: '3:2', label: '3:2', ratio: 3 / 2 },

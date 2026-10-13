@@ -2,6 +2,7 @@
 import { canvas } from '../imaging';
 import { bleed, canUpscale, guidedFilter, luminance, normalize, resizeMap, skyMask } from '../lib/matte.mjs';
 import type { ModelRequest, ModelResponse } from './model.worker';
+import { t } from '../i18n/index.mjs';
 
 type Pending = { resolve: (value: never) => void; reject: (error: Error) => void; progress?: (fraction: number) => void };
 type Payload<T> = T extends unknown ? Omit<T, 'id'> : never;
@@ -22,7 +23,7 @@ class Client<Request extends { id: number }> {
   }
   cancel() {
     this.worker?.terminate(); this.worker = null;
-    for (const pending of this.pending.values()) pending.reject(new DOMException('中止しました。', 'AbortError'));
+    for (const pending of this.pending.values()) pending.reject(new DOMException(t('中止しました。'), 'AbortError'));
     this.pending.clear();
   }
   private listen(worker: Worker) {
@@ -34,7 +35,7 @@ class Client<Request extends { id: number }> {
       if ('error' in message) pending.reject(new Error(message.error));
       else pending.resolve(message.result as never);
     };
-    worker.onerror = event => { for (const pending of this.pending.values()) pending.reject(new Error(event.message || 'AI の処理に失敗しました。')); this.pending.clear(); this.worker = null; };
+    worker.onerror = event => { for (const pending of this.pending.values()) pending.reject(new Error(event.message || t('AI の処理に失敗しました。'))); this.pending.clear(); this.worker = null; };
     return worker;
   }
 }
@@ -104,7 +105,7 @@ export { canUpscale };
 /** Upscales `source` 2× or 4× with Real-ESRGAN. Transparency is scaled smoothly. */
 export async function upscale(source: HTMLCanvasElement, factor: 2 | 4, progress?: (fraction: number) => void): Promise<HTMLCanvasElement> {
   const { width, height } = source;
-  if (!canUpscale(width, height)) throw new Error('高解像度化できるのは 300 万画素（約 2000 × 1500 px）までの画像です。先に縮小してください。');
+  if (!canUpscale(width, height)) throw new Error(t('高解像度化できるのは 300 万画素（約 2000 × 1500 px）までの画像です。先に縮小してください。'));
   const c = source.getContext('2d', { willReadFrequently: true })!;
   const pixels = c.getImageData(0, 0, width, height).data;
   let opaque = true;
