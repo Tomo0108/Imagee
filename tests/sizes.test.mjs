@@ -7,6 +7,7 @@ test('the usual sizes are there with the right pixels', () => {
   assert.deepEqual([findPreset('hd').width, findPreset('hd').height], [1280, 720]);
   assert.deepEqual([findPreset('a4').width, findPreset('a4').height], [2480, 3508]);
   const ids = SIZE_PRESETS.flatMap(group => group.items.map(item => item.id));
+  assert.equal(ids.length, 52, '18 presets added to the 34 existing sizes');
   assert.equal(new Set(ids).size, ids.length, 'ids are unique');
 });
 

@@ -11,6 +11,7 @@ export const ASPECTS = [
   { id: 'free', label: t('自由'), ratio: 0 },
   { id: 'original', label: t('元の比率'), ratio: -1 },
   { id: '1:1', label: '1:1', ratio: 1 },
+  ...[['5:4', 5 / 4], ['4:3', 4 / 3], ['3:4', 3 / 4], ['5:7', 5 / 7], ['7:5', 7 / 5], ['2:1', 2], ['1:2', .5], ['21:9', 21 / 9], ['A判 縦', 1 / Math.sqrt(2)], ['A判 横', Math.sqrt(2)]].map(([id, ratio]) => ({ id: String(id), label: String(id), ratio: Number(ratio) })),
   { id: '4:5', label: '4:5', ratio: 4 / 5 },
   { id: '3:2', label: '3:2', ratio: 3 / 2 },
   { id: '2:3', label: '2:3', ratio: 2 / 3 },

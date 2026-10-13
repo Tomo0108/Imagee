@@ -7,8 +7,17 @@ function toFile(image: NativeImage) { return new File([image.bytes as Uint8Array
 
 /** Opens the system picker. Native builds use the OS dialog; the web uses a file input.
  *  With `projects`, PSD files and Imagee projects can be picked too. */
-export function pickImages(projects = false): Promise<File[]> {
+export async function pickImages(projects = false): Promise<File[]> {
   if (native) return native.pickImages(projects).then(images => images.map(toFile));
+  if (window.showOpenFilePicker) {
+    try {
+      const handles = await window.showOpenFilePicker({ id: 'imagee-files', multiple: true, types: [{ description: '画像', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif', '.bmp', ...(projects ? ['.psd', '.imagee'] : [])] } }] });
+      return await Promise.all(handles.map(handle => handle.getFile()));
+    } catch (error) {
+      if ((error as DOMException).name === 'AbortError') return [];
+      if (!['SecurityError', 'NotAllowedError', 'TypeError'].includes((error as DOMException).name)) throw error;
+    }
+  }
   return new Promise(resolve => {
     const input = document.createElement('input');
     input.type = 'file'; input.multiple = true; input.accept = projects ? OPEN_ACCEPT : 'image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp';

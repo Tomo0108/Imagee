@@ -869,3 +869,13 @@ html[data-platform="mac"] .home-bar { padding-left: 84px; }
 @keyframes tour-card-in { from { opacity: 0; translate: 0 10px; scale: .96; } }
 @keyframes tour-card-up { from { opacity: 0; translate: 0 -10px; scale: .96; } }
 @keyframes tour-pulse { 50% { box-shadow: 0 0 0 2px var(--a1), 0 0 34px 8px color-mix(in srgb, var(--a1) 30%, transparent); } }
+.font-field { flex-direction: column; align-items: stretch; gap: 6px; }
+.font-field .field-row { display: flex; width: 100%; min-width: 0; }
+.font-field select { flex: 1; min-width: 0; width: 100%; text-overflow: ellipsis; }
+.font-field .icon-btn { flex-shrink: 0; }
+.layer-select { flex-shrink: 0; accent-color: var(--a1); cursor: pointer; }
+
+.home-hero { padding: 20px 0 28px; }
+.home-cta { margin-top: 16px; }
+.home-preset-picker { min-width: 0; }
+.home-preset-picker select { max-width: 320px; min-width: 0; }

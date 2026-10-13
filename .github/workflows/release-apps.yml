@@ -84,6 +84,7 @@ jobs:
           sha256sum "${FILES[@]}" | sed 's#  .*/#  #' > SHA256SUMS.txt
           FILES+=("SHA256SUMS.txt")
           NOTES=$'端末の中だけで完結する画像エディタ Imagee のデスクトップ版です。\n\n- Windows: `Imagee-win-setup.exe`\n- macOS（Apple シリコン）: `Imagee-mac-arm64.dmg`\n- macOS（Intel）: `Imagee-mac-x64.dmg`\n\nブラウザ版: https://tomo0108.github.io/Imagee/app/'
+          if [ -f "docs/releases/$TAG.md" ]; then NOTES=$(cat "docs/releases/$TAG.md"); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Re-running a release replaces its files; a new version needs a version bump in package.json.
             gh release upload "$TAG" "${FILES[@]}" --clobber

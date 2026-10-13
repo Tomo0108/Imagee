@@ -86,7 +86,8 @@ function Thumb({ source, stamp, active, label, onClick }: { source: (CanvasImage
 }
 
 export interface LayerActions {
-  select: (id: string) => void;
+  select: (id: string, multiple?: boolean) => void;
+  arrange: () => void;
   update: (id: string, patch: Partial<Layer>, label: string, gesture?: boolean) => void;
   commit: () => void;
   add: () => void; importImage: () => void; duplicate: () => void; remove: () => void; move: (direction: 1 | -1) => void;
@@ -95,7 +96,7 @@ export interface LayerActions {
   rename: (id: string, name: string) => void;
 }
 
-export function LayersPanel({ doc, store, cache, selected, target, onTarget, actions, editText }: { doc: Doc; store: PixelStore; cache: LayerCache; selected: Layer; target: 'layer' | 'mask'; onTarget: (target: 'layer' | 'mask') => void; actions: LayerActions; editText: boolean }) {
+export function LayersPanel({ doc, store, cache, selected, target, onTarget, actions, editText, selectedIds }: { doc: Doc; store: PixelStore; cache: LayerCache; selected: Layer; target: 'layer' | 'mask'; onTarget: (target: 'layer' | 'mask') => void; actions: LayerActions; editText: boolean; selectedIds: string[] }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const index = doc.layers.indexOf(selected);
   return <div className="panel">
@@ -109,10 +110,12 @@ export function LayersPanel({ doc, store, cache, selected, target, onTarget, act
       <IconButton icon={ArrowDown} label={t('下へ')} size={16} disabled={index === 0} onClick={() => actions.move(-1)}/>
       <IconButton icon={Trash2} label={t('レイヤーを削除')} size={16} disabled={doc.layers.length < 2} onClick={actions.remove}/>
     </div>
-    <ul className="layer-list" aria-label={t('レイヤー')}>
-      {[...doc.layers].reverse().map(layer => <li key={layer.id} className={layer.id === selected.id ? 'selected' : ''}>
-        <div className="layer-main" role="button" tabIndex={0} aria-pressed={layer.id === selected.id} onClick={() => layer.id !== selected.id && actions.select(layer.id)}
-          onKeyDown={event => { if (event.key === 'Enter' && layer.id !== selected.id) actions.select(layer.id); }}
+    <button type="button" className="btn wide" disabled={selectedIds.length < 2} onClick={actions.arrange}><Wand2 size={15} aria-hidden="true"/>{t('自動配置')}{selectedIds.length > 1 ? `（${selectedIds.length}）` : ''}</button>
+    <ul className="layer-list" aria-label="レイヤー">
+      {[...doc.layers].reverse().map(layer => <li key={layer.id} className={selectedIds.includes(layer.id) ? 'selected' : ''}>
+        {layer.kind === 'raster' && <input type="checkbox" className="layer-select" aria-label={t('{0}を選択', layer.name)} checked={selectedIds.includes(layer.id)} onChange={() => actions.select(layer.id, true)}/>}
+        <div className="layer-main" role="button" tabIndex={0} aria-pressed={selectedIds.includes(layer.id)} onClick={event => actions.select(layer.id, event.ctrlKey || event.metaKey || event.shiftKey)}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); actions.select(layer.id, event.ctrlKey || event.metaKey || event.shiftKey); } }}
           onDoubleClick={() => setRenaming(layer.id)}>
           {layer.kind === 'adjust' ? <span className="layer-thumb adjust-thumb" aria-hidden="true"><SlidersHorizontal size={15}/></span> : <Thumb source={cache.source(layer, store)?.canvas} stamp={layer} active={layer.id === selected.id && !!layer.mask && target === 'layer'} label={t('レイヤーを編集')} onClick={layer.mask ? () => { actions.select(layer.id); onTarget('layer'); } : undefined}/>}
           {layer.mask && <Thumb source={store.get(maskKey(layer.id))} stamp={layer.mask} active={layer.id === selected.id && target === 'mask'} label={t('マスクを編集')} onClick={() => { actions.select(layer.id); onTarget('mask'); }}/>}
@@ -161,7 +164,7 @@ function TextEditor({ text, autoFocus, onChange, onCommit }: { text: TextProps; 
   return <section className="panel-section" aria-label={t('テキスト')}>
     <textarea className="text-input" value={text.content} rows={3} autoFocus={autoFocus} aria-label={t('テキスト')} onFocus={e => autoFocus && e.target.select()}
       onChange={e => onChange({ content: e.target.value }, t('テキストを編集'), true)} onBlur={onCommit}/>
-    <div className="field"><span>{t('フォント')}</span><span className="field-row">
+    <div className="field font-field"><span>{t('フォント')}</span><span className="field-row">
       <select value={text.font} aria-label={t('フォント')} onChange={e => onChange({ font: e.target.value }, t('フォント'))}>
         {FONTS.map(font => <option key={font.value} value={font.value}>{font.label}</option>)}
         {families && <optgroup label={t('この端末のフォント')}>{families.map(family => <option key={family} value={localFont(family)}>{family}</option>)}</optgroup>}

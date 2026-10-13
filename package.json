@@ -1,6 +1,6 @@
 {
   "name": "imagee",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Imagee — 端末の中だけで完結する画像エディタ",
   "author": "Imagee",
@@ -18,7 +18,8 @@
     "package:win": "npm run build && electron-builder --win nsis --publish never",
     "test": "node --test tests/*.test.mjs",
     "test:ui": "node scripts/verify-ui.mjs",
-    "site": "npm run build && node scripts/build-site.mjs"
+    "site": "npm run build && node scripts/build-site.mjs",
+    "test:improvements": "node scripts/verify-improvements.mjs"
   },
   "build": {
     "appId": "app.imagee.editor",

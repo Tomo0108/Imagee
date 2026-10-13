@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, FilePlus2, ImagePlus, Images, Layers3, Lock, Settings, Sparkles, Upload, Wand2, WifiOff, CircleHelp } from 'lucide-react';
+import { ArrowRight, FilePlus2, ImagePlus, Images, Settings, Upload, CircleHelp } from 'lucide-react';
 import type { Project } from './store';
 import { pickImages } from './platform';
 import { canvas, toBlob } from './imaging';
-import { findPreset } from './lib/sizes.mjs';
-import { IconButton, Segmented, mod } from './ui';
+import { findPreset, SIZE_PRESETS } from './lib/sizes.mjs';
+import { IconButton, Segmented } from './ui';
 import { t } from './i18n/index.mjs';
 
 /** Blank canvases offered on the start screen; any other size is one click away in the size sheet. */
-const STARTERS = ['fhd', '4k', 'square', 'story', 'a4', 'youtube-thumb'];
+const STARTERS = ['fhd', '4k', 'square', 'portrait-post', 'story', 'a4', 'a5', 'postcard', 'youtube-thumb', 'ogp', 'photo-3-2', 'icon'];
 
 function useObjectUrl(blob?: Blob) {
   const [url, setUrl] = useState<string>();
@@ -76,17 +76,14 @@ export function Home({ projects, onImport, onOpen, onLibrary, onSettings, onTuto
     <main className="home-main">
       <section className="home-hero">
         <div className="home-mark" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}icons/icon-512.png`} width="112" height="112" alt=""/></div>
-        <h1>{t('写真の編集を、この端末だけで。')}</h1>
-        <p>{t('レイヤー、色調補正、修復、AI による背景削除まで。画像はこの端末の外には送られません。')}</p>
         <div className="home-cta" data-tour="home-open">
           <button type="button" className="btn primary lg" onClick={open}><ImagePlus size={18} aria-hidden="true"/>{t('画像を開く')}</button>
           <button type="button" className="btn lg" onClick={onLibrary}><Images size={18} aria-hidden="true"/>{t('ライブラリを見る')}<ArrowRight size={16} aria-hidden="true"/></button>
         </div>
-        <p className="home-drop-hint"><Upload size={14} aria-hidden="true"/>{t('画像をこの画面にドロップするか、{0}+V で貼り付けても始められます', mod)}</p>
       </section>
 
-      <section className="home-section" data-tour="home-new">
-        <div className="home-section-head"><h2><FilePlus2 size={18} aria-hidden="true"/>{t('新しいキャンバス')}</h2>
+      <section className="home-section" data-tour="home-new" aria-label={t('新しいキャンバス')}>
+        <div className="home-section-head"><label className="select home-preset-picker"><FilePlus2 size={18} aria-hidden="true"/><select aria-label={t('キャンバスのプリセット')} value="" disabled={!!creating} onChange={e => e.target.value && void create(e.target.value)}><option value="">{t('すべてのサイズ')}</option>{SIZE_PRESETS.map(group => <optgroup key={group.group} label={group.group}>{group.items.map(preset => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>)}</select></label>
           <Segmented label={t('背景')} value={background} onChange={setBackground} options={[{ value: 'white', label: t('白') }, { value: 'clear', label: t('透明') }]}/></div>
         <div className="home-starters">
           {STARTERS.map((id, index) => { const preset = findPreset(id)!; return <button key={id} type="button" className="home-starter" style={{ '--i': index } as React.CSSProperties} disabled={!!creating} onClick={() => void create(id)}>
@@ -94,23 +91,13 @@ export function Home({ projects, onImport, onOpen, onLibrary, onSettings, onTuto
             <strong>{creating === id ? t('作成中…') : preset.label}</strong><small className="num">{preset.width} × {preset.height}</small>
           </button>; })}
         </div>
-        <p className="home-note">{t('ほかのサイズは、開いたあとに「キャンバスサイズを変更」から 30 種類以上のプリセットで選べます。')}</p>
       </section>
 
       {recent.length > 0 && <section className="home-section">
-        <div className="home-section-head"><h2><Images size={18} aria-hidden="true"/>{t('最近の画像')}</h2><button type="button" className="link-btn" onClick={onLibrary}>{t('すべて見る')}</button></div>
+        <div className="home-section-head"><Images size={18} aria-label={t('最近の画像')}/><button type="button" className="link-btn" onClick={onLibrary}>{t('すべて見る')}</button></div>
         <div className="home-recents">{recent.map(project => <Recent key={project.id} project={project} onOpen={() => onOpen(project)}/>)}</div>
       </section>}
 
-      <section className="home-section">
-        <div className="home-features">
-          <div className="home-feature"><Sparkles size={20} aria-hidden="true"/><strong>{t('オフラインで動く AI')}</strong><span>{t('被写体の選択、背景の削除、不要物の消去、高解像度化')}</span></div>
-          <div className="home-feature"><Wand2 size={20} aria-hidden="true"/><strong>{t('すべて非破壊')}</strong><span>{t('補正はあとから何度でも直せて、500 回分さかのぼれます')}</span></div>
-          <div className="home-feature"><Layers3 size={20} aria-hidden="true"/><strong>{t('PSD と一括処理')}</strong><span>{t('レイヤーごとの読み書きと、まとめての書き出し')}</span></div>
-          <div className="home-feature"><Lock size={20} aria-hidden="true"/><strong>{t('アップロードしない')}</strong><span>{t('画像は端末の中だけに保存されます')}</span></div>
-          <div className="home-feature"><WifiOff size={20} aria-hidden="true"/><strong>{t('オフラインでも')}</strong><span>{t('インストールすればネットがなくても使えます')}</span></div>
-        </div>
-      </section>
     </main>
     {dragging && <div className="drop-overlay" aria-hidden="true"><div><Upload size={30}/><strong>{t('ドロップして開く')}</strong><span>{t('PNG・JPEG・WebP・AVIF・GIF・BMP・PSD・Imagee プロジェクト')}</span></div></div>}
   </div>;

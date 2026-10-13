@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron');
-const { basename, extname, isAbsolute, join, normalize, sep } = require('node:path');
+const { basename, dirname, extname, isAbsolute, join, normalize, sep } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fs = require('node:fs/promises');
 
@@ -11,6 +11,13 @@ const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'i
 const MAX_BYTES = 512 * 1024 * 1024;
 let win;
 let pendingPaths = [];
+let lastDirectory;
+const directorySettings = () => join(app.getPath('userData'), 'last-directory.json');
+async function rememberDirectory(file) {
+  lastDirectory = dirname(file);
+  await fs.mkdir(app.getPath('userData'), { recursive: true });
+  await fs.writeFile(directorySettings(), JSON.stringify({ directory: lastDirectory })).catch(() => {});
+}
 
 // The app is served from app://imagee/ rather than file://, so module workers, WebAssembly and the AI models
 // load the same way as on the web. Cross-origin isolation lets the AI use several CPU threads.
@@ -88,20 +95,24 @@ app.on('second-instance', (_event, argv) => {
 app.on('open-file', (event, file) => { event.preventDefault(); openPaths([file]); });
 openPaths(process.argv.slice(1));
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try { const saved = JSON.parse(await fs.readFile(directorySettings(), 'utf8')); if (typeof saved.directory === 'string' && isAbsolute(saved.directory)) lastDirectory = saved.directory; } catch {}
   serveApp();
   createWindow();
   register('pick-images', async projects => {
     const filters = projects ? [{ name: '画像・PSD・Imagee プロジェクト', extensions: OPEN_EXTENSIONS }] : [{ name: 'Images', extensions: IMAGE_EXTENSIONS }];
-    const result = await dialog.showOpenDialog(win, { title: '画像を開く', properties: ['openFile', 'multiSelections'], filters });
-    return result.canceled ? [] : readImages(result.filePaths);
+    const result = await dialog.showOpenDialog(win, { title: '画像を開く', defaultPath: lastDirectory, properties: ['openFile', 'multiSelections'], filters });
+    if (result.canceled) return [];
+    if (result.filePaths[0]) await rememberDirectory(result.filePaths[0]);
+    return readImages(result.filePaths);
   });
   register('take-launch-images', async () => { const paths = pendingPaths; pendingPaths = []; return readImages(paths); });
   register('save-image', async (suggestedName, bytes, extension) => {
     if (typeof suggestedName !== 'string' || !(bytes instanceof Uint8Array) || !SAVE_EXTENSIONS.includes(extension)) throw new Error('Invalid export');
-    const result = await dialog.showSaveDialog(win, { title: '書き出し', defaultPath: basename(suggestedName), filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
+    const result = await dialog.showSaveDialog(win, { title: '書き出し', defaultPath: lastDirectory ? join(lastDirectory, basename(suggestedName)) : basename(suggestedName), filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
     if (result.canceled || !result.filePath) return null;
     await fs.writeFile(result.filePath, bytes);
+    await rememberDirectory(result.filePath);
     return basename(result.filePath);
   });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

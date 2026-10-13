@@ -25,6 +25,7 @@ import { hintSeen, loadSettings, storeSettings, ToolOptions, ToolRail, TOOLS, ty
 import { CommandPalette, type Command } from './CommandPalette';
 import { HelpSheet } from './HelpSheet';
 import { ResizeSheet, type ResizeMode, type ResizeRequest } from './ResizeSheet';
+import { arrangeImages } from '../lib/layout.mjs';
 import { pickFile, pickImages, saveBlob } from '../platform';
 import { NEUTRAL_COLOR, parseCube, type ColorOps } from '../lib/color.mjs';
 import { addLut, readLuts, removeLut } from '../store';
@@ -124,6 +125,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const [cubesVersion, setCubesVersion] = useState(0);
   const [userPresets, setUserPresets] = useState<UserPreset[]>(loadUserPresets);
   const [curveHistogram, setCurveHistogram] = useState<Histogram | null>(null);
+  const [multiIds, setMultiIds] = useState<string[]>([]);
   const [editText, setEditText] = useState(false);
   const [aiBusy, setAiBusy] = useState<AiBusy | null>(null);
   const aiBusyRef = useRef(false);
@@ -298,23 +300,30 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     change(d => ({ ...d, layers: d.layers.map(layer => layer.id === id ? { ...layer, ...patch } as Layer : layer) }), label, gesture), [change]);
   const setAdjust = useCallback((patch: Partial<Adjustments>, label: string, gesture = false) => change(d => ({ ...d, adjust: { ...d.adjust, ...patch } }), label, gesture), [change]);
   /** Choosing a layer is not an edit, so it changes the present state without a history step. */
-  const selectLayer = useCallback((id: string) => {
+  const selectLayer = useCallback((id: string, multiple = false) => {
     const h = historyRef.current;
-    if (h && h.present.selected !== id) apply({ ...h, present: { ...h.present, selected: id } });
+    if (!h) return;
+    const existing = multiIds.filter(item => h.present.layers.some(layer => layer.id === item));
+    const ids = existing.length ? existing : [h.present.selected];
+    const next = multiple ? (ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]) : [id];
+    if (!next.length) return;
+    setMultiIds(next);
+    const primary = next.includes(id) ? id : next[next.length - 1];
+    if (h.present.selected !== primary) apply({ ...h, present: { ...h.present, selected: primary } });
     merging.current = null;
     setEditText(false); setEditImage(false);
-  }, [apply]);
+  }, [apply, multiIds]);
   /** Records that a surface reached a new revision. When the working composite already shows it, skip recompositing. */
   const commitSurface = useCallback((layerId: string, mask: boolean, rev: number, label: string, current: boolean) => {
     const next = change(d => ({ ...d, layers: d.layers.map(layer => layer.id !== layerId ? layer : mask ? { ...layer, mask: { ...layer.mask!, rev } } : { ...layer, rev } as Layer) }), label);
     if (next && current) composited.current = next.layers;
   }, [change]);
-  const insertLayer = useCallback((layer: Layer, label: string) => change(d => {
+  const insertLayer = useCallback((layer: Layer, label: string) => { setMultiIds([layer.id]); return change(d => {
     const index = d.layers.findIndex(l => l.id === d.selected);
     const layers = [...d.layers];
     layers.splice(index + 1, 0, layer);
     return { ...d, layers, selected: layer.id };
-  }, label), [change]);
+  }, label); }, [change]);
   const newRaster = useCallback((d: Doc, name = uniqueName(d.layers, t('レイヤー')), source?: (context: CanvasRenderingContext2D) => void): RasterLayer => {
     const id = newLayerId();
     store.create(id, d.width, d.height);
@@ -339,6 +348,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   useEffect(() => { if (tool !== 'crop') setView(null); }, [output?.width, output?.height]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selected = doc ? doc.layers.find(layer => layer.id === doc.selected) || doc.layers[doc.layers.length - 1] : null;
+  const existingIds = doc ? multiIds.filter(id => doc.layers.some(layer => layer.id === id)) : [];
+  const selectedIds = doc ? (existingIds.length ? existingIds : [doc.selected]) : [];
   useEffect(() => { if (selected && !selected.mask && target === 'mask') setTarget('layer'); }, [selected, target]);
 
   /** The surface painting tools work on. Painting on a text or shape layer starts a new layer above it. */
@@ -833,19 +844,56 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     if (!d || !clip) return;
     insertLayer(newRaster(d, uniqueName(d.layers, t('ペースト')), c => c.drawImage(clip.canvas, 0, 0)), t('ペースト'));
   }, [insertLayer, newRaster]);
-  const addImage = useCallback(async (file: File) => {
+  const addImages = useCallback(async (files: File[]) => {
+    const layers: RasterLayer[] = [];
+    for (const file of files.filter(isImageFile)) {
+      try {
+        const image = await decode(file);
+        try {
+          const d = historyRef.current?.present;
+          if (!d || !mounted.current) return;
+          const scale = Math.min(1, d.width / image.width, d.height / image.height);
+          const w = Math.max(1, Math.round(image.width * scale)), h = Math.max(1, Math.round(image.height * scale));
+          const layer = newRaster(d, baseName(file.name), c => c.drawImage(image, Math.round((d.width - w) / 2), Math.round((d.height - h) / 2), w, h));
+          layers.push(layer);
+        } finally { image.close(); }
+      } catch (e) { onToast((e as Error).message); }
+    }
+    if (!layers.length || !mounted.current) return;
+    change(d => { const next = [...d.layers]; next.splice(next.findIndex(l => l.id === d.selected) + 1, 0, ...layers); return { ...d, layers: next, selected: layers[layers.length - 1].id }; }, t('画像を追加'));
+    setMultiIds(layers.map(layer => layer.id)); setTab('layers'); setTool('move');
+  }, [newRaster, change, onToast, setTab, setTool]);
+  const addImage = useCallback((file: File) => addImages([file]), [addImages]);
+
+  const arrange = () => {
     const d = historyRef.current?.present;
     if (!d) return;
-    try {
-      const image = await decode(file);
-      const scale = Math.min(1, d.width / image.width, d.height / image.height);
-      const w = Math.round(image.width * scale), h = Math.round(image.height * scale);
-      insertLayer(newRaster(d, file.name.replace(/\.[^.]+$/, '') || uniqueName(d.layers, t('画像')), c => c.drawImage(image, Math.round((d.width - w) / 2), Math.round((d.height - h) / 2), w, h)), t('画像を追加'));
-      image.close();
-      // Placed images are ready to be positioned with the smart guides.
-      setTab('layers'); setTool('move');
-    } catch (e) { onToast((e as Error).message); }
-  }, [insertLayer, newRaster, onToast, setTab, setTool]);
+    const images = d.layers.filter(layer => selectedIds.includes(layer.id) && layer.kind === 'raster' && layer.visible);
+    if (images.length < 2) { onToast(t('画像レイヤーを2枚以上選択してください')); return; }
+    const sources = images.map(layer => {
+      const source = store.get(layer.id)!;
+      const data = source.getContext('2d')!.getImageData(0, 0, source.width, source.height).data;
+      let left = source.width, top = source.height, right = -1, bottom = -1;
+      for (let y = 0; y < source.height; y++) for (let x = 0; x < source.width; x++) if (data[(y * source.width + x) * 4 + 3]) { left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x); bottom = Math.max(bottom, y); }
+      return { source, x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
+    });
+    if (sources.some(source => source.w <= 0 || source.h <= 0)) { onToast(t('空の画像レイヤーは配置できません')); return; }
+    const positions = arrangeImages(sources, d.width, d.height) as Box[];
+    const replacements = new Map<string, RasterLayer>();
+    images.forEach((layer, i) => {
+      const source = sources[i], position = positions[i];
+      const next = newRaster(d, layer.name, c => c.drawImage(source.source, source.x, source.y, source.w, source.h, position.x, position.y, position.w, position.h));
+      if (layer.mask) {
+        const mask = store.get(maskKey(layer.id));
+        const rev = store.create(maskKey(next.id), d.width, d.height);
+        if (mask) store.context(maskKey(next.id)).drawImage(mask, source.x, source.y, source.w, source.h, position.x, position.y, position.w, position.h);
+        next.mask = { ...layer.mask, rev };
+      }
+      replacements.set(layer.id, { ...next, opacity: layer.opacity, blend: layer.blend });
+    });
+    change(doc => ({ ...doc, layers: doc.layers.map(layer => replacements.get(layer.id) || layer), selected: replacements.get(doc.selected)?.id || doc.selected }), t('画像を自動配置'));
+    setMultiIds(images.map(layer => replacements.get(layer.id)!.id));
+  };
 
   const aiSubject = useCallback(() => {
     const d = historyRef.current?.present, source = work.current;
@@ -964,7 +1012,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     commit: endGesture,
     rename: (id, name) => updateLayer(id, { name }, t('名前を変更')),
     add: () => { const d = historyRef.current?.present; if (d) insertLayer(newRaster(d), t('新規レイヤー')); },
-    importImage: () => void pickImages().then(files => files[0] && addImage(files[0])),
+    importImage: () => void pickImages().then(addImages),
+    arrange,
     duplicate: () => {
       const d = historyRef.current?.present;
       const layer = d?.layers.find(l => l.id === d.selected);
@@ -1018,7 +1067,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       const mask = layer.mask && { ...layer.mask, rev: store.create(maskKey(raster.id), d.width, d.height, store.get(maskKey(layer.id))) };
       change(doc => ({ ...doc, selected: raster.id, layers: doc.layers.map(l => l.id === layer.id ? { ...raster, visible: l.visible, opacity: l.opacity, blend: l.blend, mask } : l) }), t('ラスタライズ'));
     },
-  }), [selectLayer, updateLayer, endGesture, insertLayer, newRaster, addImage, change, store, cache]);
+  }), [selectLayer, updateLayer, endGesture, insertLayer, newRaster, addImages, change, store, cache, multiIds, doc]);
 
   /** Everything the feature search can find and run. */
   const commands = useMemo((): Command[] => {
@@ -1115,7 +1164,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
       if ((event.target as HTMLElement)?.closest?.('input, textarea')) return;
-      const file = [...(event.clipboardData?.files || [])].find(isImageFile);
+      const files = [...(event.clipboardData?.files || [])].filter(isImageFile);
+      const file = files[0];
       const clip = clipboard.current;
       event.preventDefault();
       // Our own copy comes back from the system clipboard too; paste it in place rather than centred.
@@ -1124,7 +1174,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     };
     window.addEventListener('paste', paste);
     return () => window.removeEventListener('paste', paste);
-  }, [addImage, pasteInternal]);
+  }, [addImages, pasteInternal]);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -1219,7 +1269,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     <div className="editor-body">
       <ToolRail tool={tool} onTool={setTool} colors={colors} onColors={setColors}/>
       <div className="stage-wrap" onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
-        onDrop={event => { const file = [...event.dataTransfer.files].find(isImageFile); if (file) { event.preventDefault(); void addImage(file); } }}>
+        onDrop={event => { const files = [...event.dataTransfer.files].filter(isImageFile); if (files.length) { event.preventDefault(); void addImages(files); } }}>
         <Stage doc={shown} image={before ? work.current : (version ? adjuster.canvas : null)} imageVersion={version + (before ? 0.5 : 0)} view={view} tool={tool} spaceHeld={space} checkerboard={prefs.checkerboard}
           aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
         {before && <div className="stage-badge">{t('補正前')}</div>}
@@ -1252,7 +1302,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
             cubes={cubes} presetSource={work.current} version={version} userPresets={userPresets}
             onBasic={setBasic} onColor={setColor} onState={setAdjustState} onCommit={endGesture} onAuto={auto} onReset={() => setAdjustState({ basic: NEUTRAL, color: NEUTRAL_COLOR }, t('調整をリセット'))}
             onImportLut={() => void importLut()} onRemoveLut={deleteLut} onSavePreset={savePreset} onDeletePreset={deletePreset} onEditImage={adjustLayer ? () => setEditImage(true) : undefined}/>}
-          {tab === 'layers' && <LayersPanel doc={doc} store={store} cache={cache} selected={selected} target={target} onTarget={setTarget} actions={layerActions} editText={editText}/>}
+          {tab === 'layers' && <LayersPanel doc={doc} store={store} cache={cache} selected={selected} target={target} onTarget={setTarget} actions={layerActions} editText={editText} selectedIds={selectedIds}/>}
           {tab === 'ai' && <AiPanel busy={aiBusy} hasSelection={!!selection} layerName={selected.name} canRemoveBackground={selected.kind !== 'adjust'} output={output}
             onSubject={aiSubject} onSky={aiSky} onRemoveBackground={aiRemoveBackground} onRemoveTool={() => setTool('remove')} onFillSelection={aiFillSelection} onUpscale={aiUpscale} onCancel={cancelAi}/>}
           {tab === 'history' && <HistoryPanel history={history} onJump={index => apply(jump(history, index))}/>}

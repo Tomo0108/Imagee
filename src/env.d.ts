@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 interface NativeImage { name: string; type: string; bytes: Uint8Array; lastModified: number }
 interface Window {
+  showOpenFilePicker?: (options: { id: string; multiple: boolean; types: { description: string; accept: Record<string, string[]> }[] }) => Promise<FileSystemFileHandle[]>;
   imagee?: {
     platform: string;
     pickImages(projects?: boolean): Promise<NativeImage[]>;

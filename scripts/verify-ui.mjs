@@ -8,12 +8,13 @@ import { unzipSync } from 'fflate';
 
 const out = process.env.IMAGEE_SHOTS || 'screenshots';
 mkdirSync(out, { recursive: true });
-const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', '4174', '--strictPort'], { stdio: 'ignore' });
-const url = 'http://127.0.0.1:4174/';
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', '4176', '--strictPort'], { stdio: 'ignore' });
+const url = 'http://127.0.0.1:4176/';
 try {
   for (let i = 0; i < 50; i++) { try { await fetch(url); break; } catch { await new Promise(r => setTimeout(r, 200)); } }
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+  await page.addInitScript(() => { window.showOpenFilePicker = undefined; });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(url);
@@ -45,7 +46,7 @@ try {
   await page.keyboard.press('Escape');
   await page.locator('.tour').waitFor({ state: 'detached' });
   await page.getByRole('button', { name: 'ライブラリ', exact: true }).click();
-  await page.getByRole('heading', { name: '画像を追加して編集を始めましょう' }).waitFor();
+  await page.locator('.idle').waitFor();
   await page.screenshot({ path: `${out}/library-empty-dark.png` });
 
   // Build fixture images in the page so the test needs no binary files.
@@ -530,8 +531,9 @@ try {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ ...JSON.parse(localStorage.getItem('imagee-preferences') || '{}'), lang: 'en' })));
   await page.reload();
-  await page.locator('.home h1').waitFor();
-  assert.equal(await page.locator('.home h1').textContent(), 'Photo editing, right on this device.');
+  await page.locator('.home-starter').first().waitFor();
+  assert.equal(await page.locator('.home h1, .home h2, .home-features').count(), 0);
+  assert.equal(await page.locator('.home-cta').getByRole('button').first().textContent(), 'Open Image');
   assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
   await page.screenshot({ path: `${out}/home-en.png` });
   await page.locator('.settings-btn').click();
@@ -550,3 +552,5 @@ try {
   await browser.close();
   console.log(`UI checks passed. Screenshots in ${out}/`);
 } finally { server.kill(); }
+
+
