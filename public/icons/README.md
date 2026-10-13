@@ -1,6 +1,7 @@
-Imagee's approved violet glass `I` icon (without a photograph symbol).
+Imagee's approved smooth violet glass `I` icon (without ribbon creases or a photograph symbol).
 
 - `icon-32.png`, `icon-180.png`, `icon-192.png`, `icon-512.png` (web / PWA)
+- `icon-maskable-512.png` (Android / maskable PWA)
 - `Imagee.icns` (macOS), `Imagee.ico` (Windows)
 - `artwork.png` is the original transparent PNG source.
 

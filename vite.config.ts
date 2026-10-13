@@ -13,7 +13,12 @@ export default defineConfig(({ command }) => ({
     writeBundle(options, bundle) {
       const files = Object.keys(bundle).sort();
       const assets = files.filter(name => /\.(js|mjs|css|wasm)$/.test(name) && !name.endsWith('.map')).map(name => `./${name}`);
-      const build = createHash('sha256').update(files.join('\n')).digest('hex').slice(0, 12);
+      const hash = createHash('sha256').update(files.join('\n'));
+      // Public icons have stable filenames, so include their contents to refresh the offline cache.
+      for (const icon of ['icon-32.png', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png']) {
+        hash.update(readFileSync(join(options.dir!, 'icons', icon)));
+      }
+      const build = hash.digest('hex').slice(0, 12);
       const path = join(options.dir!, 'sw.js');
       const source = readFileSync(path, 'utf8').replace("const BUILD = 'dev';", `const BUILD = '${build}';`).replace('const ASSETS = [];\nconst WASM = [];', `const ASSETS = ${JSON.stringify(assets.filter(name => !name.endsWith('.wasm')))};\nconst WASM = ${JSON.stringify(assets.filter(name => name.endsWith('.wasm')))};`);
       writeFileSync(path, source);
