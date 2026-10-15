@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, FilePlus2, ImagePlus, Images, Settings, Upload, CircleHelp } from 'lucide-react';
+import { ArrowRight, FilePlus2, ImagePlus, Images, Pencil, Settings, Upload, CircleHelp } from 'lucide-react';
 import type { Project } from './store';
 import { pickImages } from './platform';
 import { canvas, toBlob } from './imaging';
@@ -16,6 +16,27 @@ function useObjectUrl(blob?: Blob) {
   return url;
 }
 
+/** One library image in the moving reel: its own aspect ratio, name and an edit badge on hover. */
+function ReelItem({ project, onOpen, copy }: { project: Project; onOpen: () => void; copy?: boolean }) {
+  const url = useObjectUrl(project.thumbnail);
+  return <button type="button" className="reel-item" onClick={onOpen} aria-label={t('{0}を開く', project.name)} aria-hidden={copy || undefined} tabIndex={copy ? -1 : undefined}
+    style={{ aspectRatio: `${Math.max(0.5, Math.min(2.2, project.width / project.height))}` }}>
+    {url && <img src={url} alt="" draggable={false}/>}
+    <span className="reel-caption"><span className="reel-name">{project.name}</span><span className="reel-edit"><Pencil size={13} aria-hidden="true"/>{t('編集')}</span></span>
+  </button>;
+}
+
+/** The library flowing sideways. Two copies make the loop seamless; hovering or focusing pauses it. */
+function Reel({ projects, onOpen }: { projects: Project[]; onOpen: (project: Project) => void }) {
+  const items = projects.slice(0, 24);
+  const copies = items.length < 6 ? 4 : 2;
+  return <div className="reel" style={{ '--reel-time': `${Math.max(30, items.length * 7)}s`, '--reel-copies': copies } as React.CSSProperties}>
+    <div className="reel-track">
+      {Array.from({ length: copies }, (_, copy) => items.map(project => <ReelItem key={`${copy}-${project.id}`} project={project} copy={copy > 0} onOpen={() => onOpen(project)}/>))}
+    </div>
+  </div>;
+}
+
 function Recent({ project, onOpen }: { project: Project; onOpen: () => void }) {
   const url = useObjectUrl(project.thumbnail);
   return <button type="button" className="home-recent" onClick={onOpen} aria-label={t('{0}を開く', project.name)}>
@@ -25,15 +46,15 @@ function Recent({ project, onOpen }: { project: Project; onOpen: () => void }) {
 }
 
 /** The start screen: open or create something, pick up recent work, or go to the library. */
-export function Home({ projects, onImport, onOpen, onLibrary, onSettings, onTutorial, onCreate }: {
-  projects: Project[] | null; onImport: (files: File[], open?: boolean) => void; onOpen: (project: Project) => void;
+export function Home({ projects, reel, onImport, onOpen, onLibrary, onSettings, onTutorial, onCreate }: {
+  projects: Project[] | null; reel: boolean; onImport: (files: File[], open?: boolean) => void; onOpen: (project: Project) => void;
   onLibrary: () => void; onSettings: () => void; onTutorial: () => void; onCreate: (file: File) => void;
 }) {
   const [background, setBackground] = useState<'white' | 'clear'>('white');
   const [dragging, setDragging] = useState(false);
   const [creating, setCreating] = useState('');
   const depth = useRef(0);
-  const recent = useMemo(() => [...(projects || [])].sort((a, b) => Math.max(b.opened || 0, b.edited || 0, b.added) - Math.max(a.opened || 0, a.edited || 0, a.added)).slice(0, 8), [projects]);
+  const recent = useMemo(() => [...(projects || [])].sort((a, b) => Math.max(b.opened || 0, b.edited || 0, b.added) - Math.max(a.opened || 0, a.edited || 0, a.added)), [projects]);
 
   const create = async (id: string) => {
     const preset = findPreset(id)!;
@@ -82,6 +103,13 @@ export function Home({ projects, onImport, onOpen, onLibrary, onSettings, onTuto
         </div>
       </section>
 
+      {recent.length > 0 && <section className="home-section home-library" aria-label={t('ライブラリ')}>
+        <div className="home-section-head"><Images size={18} aria-label={t('ライブラリ')}/><button type="button" className="link-btn" onClick={onLibrary}>{t('すべて見る')}</button></div>
+        {reel && recent.length > 1
+          ? <Reel projects={recent} onOpen={onOpen}/>
+          : <div className="home-recents">{recent.slice(0, 8).map(project => <Recent key={project.id} project={project} onOpen={() => onOpen(project)}/>)}</div>}
+      </section>}
+
       <section className="home-section" data-tour="home-new" aria-label={t('新しいキャンバス')}>
         <div className="home-section-head"><label className="select home-preset-picker"><FilePlus2 size={18} aria-hidden="true"/><select aria-label={t('キャンバスのプリセット')} value="" disabled={!!creating} onChange={e => e.target.value && void create(e.target.value)}><option value="">{t('すべてのサイズ')}</option>{SIZE_PRESETS.map(group => <optgroup key={group.group} label={group.group}>{group.items.map(preset => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>)}</select></label>
           <Segmented label={t('背景')} value={background} onChange={setBackground} options={[{ value: 'white', label: t('白') }, { value: 'clear', label: t('透明') }]}/></div>
@@ -92,11 +120,6 @@ export function Home({ projects, onImport, onOpen, onLibrary, onSettings, onTuto
           </button>; })}
         </div>
       </section>
-
-      {recent.length > 0 && <section className="home-section">
-        <div className="home-section-head"><Images size={18} aria-label={t('最近の画像')}/><button type="button" className="link-btn" onClick={onLibrary}>{t('すべて見る')}</button></div>
-        <div className="home-recents">{recent.map(project => <Recent key={project.id} project={project} onOpen={() => onOpen(project)}/>)}</div>
-      </section>}
 
     </main>
     {dragging && <div className="drop-overlay" aria-hidden="true"><div><Upload size={30}/><strong>{t('ドロップして開く')}</strong><span>{t('PNG・JPEG・WebP・AVIF・GIF・BMP・PSD・Imagee プロジェクト')}</span></div></div>}

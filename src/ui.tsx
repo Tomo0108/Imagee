@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
-import { X, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { CircleHelp, X, type LucideIcon } from 'lucide-react';
 import { t } from './i18n/index.mjs';
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -72,3 +72,15 @@ export function Slider({ label, value, min, max, step = 1, unit = '', onChange, 
 export function Kbd({ children }: { children: ReactNode }) { return <kbd className="kbd">{children}</kbd>; }
 
 export const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl';
+
+/** A small help button that holds an explanation: shown on hover, or toggled by click or keyboard. */
+export function HelpTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return <span className={`help-tip${open ? ' open' : ''}`} onMouseLeave={() => setOpen(false)}>
+    <button type="button" className="help-tip-btn" aria-label={t('説明')} aria-expanded={open} aria-describedby={id}
+      onClick={event => { event.preventDefault(); event.stopPropagation(); setOpen(value => !value); }} onBlur={() => setOpen(false)}
+      onKeyDown={event => { if (event.key === 'Escape' && open) { event.stopPropagation(); event.preventDefault(); setOpen(false); } }}><CircleHelp size={14} aria-hidden="true"/></button>
+    <span role="tooltip" id={id} className="help-tip-pop">{text}</span>
+  </span>;
+}

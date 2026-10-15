@@ -81,7 +81,8 @@ function createWindow() {
   win.on('closed', () => { win = null; });
   win.setMenuBarVisibility(false);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', event => event.preventDefault());
+  // Stay inside the app, but let it reload itself (switching the display language does).
+  win.webContents.on('will-navigate', (event, url) => { if (url !== win.webContents.getURL()) event.preventDefault(); });
   if (process.argv.includes('--dev')) win.loadURL('http://127.0.0.1:5173');
   else win.loadURL('app://imagee/index.html');
 }

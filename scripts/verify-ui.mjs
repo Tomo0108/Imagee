@@ -500,6 +500,12 @@ try {
   await page.waitForTimeout(600);
   const stageBox = await page.locator('.stage').boundingBox();
   const gx = stageBox.x + stageBox.width / 2, gy = stageBox.y + stageBox.height / 2;
+  const selectedLayer = () => page.locator('.layer-list li.selected .layer-name').first().textContent();
+  assert.equal(await selectedLayer(), 'blue');
+  // The move tool picks whatever is clicked: the photo around the square, then the square itself.
+  await page.mouse.click(gx - 150, gy - 220);
+  await page.waitForTimeout(200);
+  assert.equal(await selectedLayer(), '背景', 'clicking the photo selects its layer');
   await page.mouse.move(gx, gy);
   await page.mouse.down();
   await page.mouse.move(gx + 2, gy + 1, { steps: 2 });
@@ -513,6 +519,21 @@ try {
   await page.screenshot({ path: `${out}/smart-guides-light.png` });
   await page.mouse.up();
   assert.ok(guidePixels > 50, `smart guides are drawn while moving (${guidePixels})`);
+  assert.equal(await selectedLayer(), 'blue', 'clicking the square selects its layer');
+  // Layers reorder by dragging their grip.
+  const names = () => page.locator('.layer-list .layer-name').allTextContents();
+  assert.deepEqual(await names(), ['blue', '背景']);
+  const grip = await page.locator('.layer-grip').first().boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 30, { steps: 4 });
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 60, { steps: 4 });
+  await page.screenshot({ path: `${out}/layer-drag-light.png` });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  assert.deepEqual(await names(), ['背景', 'blue'], 'the dragged layer moved below');
+  await page.keyboard.press('Control+z');
+  assert.deepEqual(await names(), ['blue', '背景']);
   await page.keyboard.press('Control+z');
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(300);
@@ -529,8 +550,16 @@ try {
 
   // English: the language setting translates the whole interface after a reload.
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ ...JSON.parse(localStorage.getItem('imagee-preferences') || '{}'), lang: 'en' })));
-  await page.reload();
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await page.locator('.settings-btn').first().click();
+  // Explanations live behind ? buttons.
+  await page.locator('.help-tip-btn').first().hover();
+  await page.waitForTimeout(300);
+  assert.ok(await page.locator('.help-tip-pop').first().isVisible());
+  await page.screenshot({ path: `${out}/settings-help-light.png` });
+  await Promise.all([page.waitForEvent('load'), page.getByRole('radio', { name: 'English' }).click()]);
+  await page.getByRole('button', { name: 'Library', exact: true }).waitFor().catch(() => {});
+  if (await page.locator('.home').count() === 0) await page.getByRole('button', { name: 'Home' }).click();
   await page.locator('.home-starter').first().waitFor();
   assert.equal(await page.locator('.home h1, .home h2, .home-features').count(), 0);
   assert.equal(await page.locator('.home-cta').getByRole('button').first().textContent(), 'Open Image');
@@ -542,7 +571,16 @@ try {
   await page.screenshot({ path: `${out}/settings-en.png` });
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
-  await page.locator('.home-recent').first().click();
+  // The library drifts across the start screen and stops under the pointer.
+  // The track keeps moving, so aim at whichever picture is in the middle of the screen right now.
+  await page.locator('.reel').scrollIntoViewIfNeeded();
+  const reelBox = await page.locator('.reel').boundingBox();
+  await page.mouse.move(reelBox.x + reelBox.width / 2, reelBox.y + reelBox.height / 2);
+  const reel = page.locator('.reel-item:hover');
+  await page.waitForTimeout(400);
+  assert.equal(await page.locator('.reel-track').evaluate(el => getComputedStyle(el).animationPlayState), 'paused');
+  await page.screenshot({ path: `${out}/home-reel-en.png` });
+  await reel.click({ force: true });
   await page.locator('.stage canvas').waitFor();
   await page.waitForTimeout(400);
   assert.ok(await page.getByRole('button', { name: 'Back to Library' }).isVisible());

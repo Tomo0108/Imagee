@@ -70,7 +70,7 @@ export function ToolRail({ tool, onTool, colors, onColors }: { tool: Tool; onToo
 
 /** How each tool works. Shown above the canvas the first time a tool is picked, and always in the help. */
 export const TOOL_HINTS: Record<Tool, string> = {
-  move: t('ドラッグで選択中のレイヤーを移動します。矢印キーで 1px、Shift を押しながらで 10px ずつ動きます。'),
+  move: t('クリックした画像・文字・図形を選んでドラッグで移動します。Shift+ドラッグで選択中のレイヤーを、矢印キーで 1px ずつ動かせます。'),
   marquee: t('ドラッグで長方形の範囲を選択します。Shift で追加、Alt で除外できます。'),
   ellipse: t('ドラッグで楕円形の範囲を選択します。Shift で追加、Alt で除外できます。'),
   lasso: t('ドラッグして囲んだ範囲を選択します。'),

@@ -443,14 +443,44 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const scaleRef = useRef(1);
   scaleRef.current = view?.scale ?? 1;
 
+  /** The topmost visible image, text or shape under a point: its own pixels (and mask) decide, not its box. */
+  const hitLayer = useCallback((d: Doc, p: Point): Layer | null => {
+    for (let i = d.layers.length - 1; i >= 0; i--) {
+      const layer = d.layers[i];
+      if (!layer.visible || layer.kind === 'adjust' || layer.opacity === 0) continue;
+      const box = contentBounds(layer);
+      if (!box || p.x < box.x || p.y < box.y || p.x >= box.x + box.w || p.y >= box.y + box.h) continue;
+      const opaque = (surface: CanvasImageSource | undefined | null, x: number, y: number) => {
+        if (!(surface instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && surface instanceof OffscreenCanvas))) return true;
+        if (x < 0 || y < 0 || x >= surface.width || y >= surface.height) return false;
+        const c = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+        return !c || c.getImageData(Math.floor(x), Math.floor(y), 1, 1).data[3] > 24;
+      };
+      if (layer.kind === 'raster' && !opaque(store.get(layer.id), p.x - layer.x, p.y - layer.y)) continue;
+      if (layer.mask?.enabled) {
+        const mask = store.get(maskKey(layer.id));
+        if (mask instanceof HTMLCanvasElement) {
+          const c = mask.getContext('2d');
+          if (c && c.getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data[0] < 24) continue;
+        }
+      }
+      return layer;
+    }
+    return null;
+  }, [contentBounds, store]);
+
   const begin = useCallback((p: ToolPointer, d: Doc) => {
     const mode: SelectMode = p.shift ? 'add' : p.alt ? 'subtract' : settings.selectMode;
     const layer = d.layers.find(l => l.id === d.selected)!;
     switch (tool) {
       case 'move': {
+        // Clicking an image, text or shape picks its layer (Shift keeps the current one).
+        const hit = p.shift ? null : hitLayer(d, p);
+        const target = hit ?? layer;
+        if (hit && hit.id !== layer.id) selectLayer(hit.id);
         // Smart guides: what the object can line up with (the canvas, and every other visible object).
-        const others = d.layers.filter(l => l.id !== layer.id && l.visible).map(contentBounds).filter((b): b is Box => !!b);
-        action.current = { kind: 'move', id: layer.id, start: p, origin: { x: layer.x, y: layer.y }, box: contentBounds(layer), others, snap: null };
+        const others = d.layers.filter(l => l.id !== target.id && l.visible).map(contentBounds).filter((b): b is Box => !!b);
+        action.current = { kind: 'move', id: target.id, start: p, origin: { x: target.x, y: target.y }, box: contentBounds(target), others, snap: null };
         break;
       }
       case 'marquee': case 'ellipse': action.current = { kind: 'select', shape: tool === 'marquee' ? 'rect' : 'ellipse', start: p, end: p, mode, square: false }; break;
@@ -530,7 +560,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       }
     }
     bumpOverlay();
-  }, [tool, settings, colors, store, cache, surfaceFor, pickColor, refresh, commitSurface, insertLayer, selectLayer, setSelection, onToast]);
+  }, [tool, settings, colors, store, cache, surfaceFor, pickColor, refresh, commitSurface, insertLayer, selectLayer, setSelection, onToast, hitLayer, contentBounds]);
 
   const move = useCallback((p: ToolPointer) => {
     const a = action.current;
@@ -1037,6 +1067,13 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       [layers[index], layers[to]] = [layers[to], layers[index]];
       return { ...d, layers };
     }, direction > 0 ? t('レイヤーを上へ') : t('レイヤーを下へ')),
+    reorder: (id, to) => change(d => {
+      const from = d.layers.findIndex(l => l.id === id);
+      if (from < 0 || to === from || to < 0 || to >= d.layers.length) return d;
+      const layers = [...d.layers];
+      layers.splice(to, 0, ...layers.splice(from, 1));
+      return { ...d, layers };
+    }, t('レイヤーを並び替え')),
     addMask: () => {
       const d = historyRef.current?.present;
       if (!d) return;

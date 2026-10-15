@@ -15,6 +15,7 @@ export const BLEND_MODES: { value: BlendMode; label: string }[] = [
 ];
 
 export const FONTS = [
+  { value: "-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Inter Variable', 'Noto Sans JP Variable', sans-serif", label: t('システム（SF Pro・ヒラギノ角ゴ）') },
   { value: "'Noto Sans JP Variable', sans-serif", label: t('ゴシック（Noto Sans JP）') },
   { value: "'Inter Variable', 'Noto Sans JP Variable', sans-serif", label: 'Inter' },
   { value: "'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', serif", label: t('明朝') },

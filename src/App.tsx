@@ -123,7 +123,7 @@ export default function App() {
     {open
       ? <Editor key={open.id} project={open} prefs={prefs} onClose={() => { setOpenId(null); setView('library'); }} onUpdate={update} onToast={setToast} onSettings={() => setSettings(true)} onAddImage={file => void importFiles([file], true)}/>
       : view === 'home'
-        ? <Home projects={projects || []} onImport={importFiles} onOpen={openProject} onLibrary={() => setView('library')} onSettings={() => setSettings(true)} onTutorial={replayTutorial} onCreate={file => void importFiles([file], true)}/>
+        ? <Home projects={projects || []} reel={prefs.homeReel} onImport={importFiles} onOpen={openProject} onLibrary={() => setView('library')} onSettings={() => setSettings(true)} onTutorial={replayTutorial} onCreate={file => void importFiles([file], true)}/>
         : <Library projects={projects} prefs={prefs} busy={busy} onPrefs={setPrefs} onImport={importFiles} onOpen={openProject} onUpdate={update} onRemove={remove} onSettings={() => setSettings(true)} onHome={() => setView('home')} onExport={project => void exportProject(project)} onToast={setToast}/>}
     {settings && <Settings prefs={prefs} onChange={setPrefs} onClose={() => setSettings(false)} onLanguage={changeLanguage} onTutorial={replayTutorial}/>}
     {tour && tour === screen && <Tour key={tour} id={tour} onDone={() => setTour(null)}/>}

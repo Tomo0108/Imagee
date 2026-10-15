@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, Copy, Eye, EyeOff, ImagePlus, Italic, Plus, SlidersHorizontal, SquareDashed, Trash2, Type, Wand2 } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, Copy, Eye, EyeOff, GripVertical, ImagePlus, Italic, Plus, SlidersHorizontal, SquareDashed, Trash2, Type, Wand2 } from 'lucide-react';
 import type { Project } from '../store';
 import { histogram, type Histogram } from '../imaging';
 import { entries, type History } from '../lib/history.mjs';
@@ -91,6 +91,8 @@ export interface LayerActions {
   update: (id: string, patch: Partial<Layer>, label: string, gesture?: boolean) => void;
   commit: () => void;
   add: () => void; importImage: () => void; duplicate: () => void; remove: () => void; move: (direction: 1 | -1) => void;
+  /** Moves a layer to `to`, an index in doc.layers (0 is the bottom). */
+  reorder: (id: string, to: number) => void;
   addMask: () => void; removeMask: () => void; rasterize: () => void;
   addAdjust: () => void; editAdjust: () => void;
   rename: (id: string, name: string) => void;
@@ -99,6 +101,41 @@ export interface LayerActions {
 export function LayersPanel({ doc, store, cache, selected, target, onTarget, actions, editText, selectedIds }: { doc: Doc; store: PixelStore; cache: LayerCache; selected: Layer; target: 'layer' | 'mask'; onTarget: (target: 'layer' | 'mask') => void; actions: LayerActions; editText: boolean; selectedIds: string[] }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const index = doc.layers.indexOf(selected);
+  // Drag to reorder: the grabbed row follows the pointer and the others slide out of its way.
+  const list = useRef<HTMLUListElement>(null);
+  const [drag, setDrag] = useState<{ id: string; from: number; to: number; dy: number; step: number } | null>(null);
+  const count = doc.layers.length;
+  const startDrag = (event: React.PointerEvent<HTMLElement>, id: string, from: number) => {
+    if (event.button !== 0 || !list.current) return;
+    event.preventDefault();
+    const rects = [...list.current.children].map(row => row.getBoundingClientRect());
+    const step = rects.length > 1 ? Math.abs(rects[1].top - rects[0].top) : rects[from].height;
+    const handle = event.currentTarget, y0 = event.clientY;
+    handle.setPointerCapture(event.pointerId);
+    let to = from;
+    const move = (e: PointerEvent) => {
+      const dy = e.clientY - y0, middle = rects[from].top + rects[from].height / 2 + dy;
+      to = rects.filter((r, i) => i !== from && r.top + r.height / 2 < middle).length;
+      setDrag({ id, from, to, dy, step });
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      setDrag(null);
+      if (to !== from) actions.reorder(id, count - 1 - to);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+    setDrag({ id, from, to, dy: 0, step });
+  };
+  const shift = (i: number) => {
+    if (!drag || i === drag.from) return 0;
+    if (drag.from < drag.to && i > drag.from && i <= drag.to) return -drag.step;
+    if (drag.from > drag.to && i >= drag.to && i < drag.from) return drag.step;
+    return 0;
+  };
   return <div className="panel">
     <div className="layer-toolbar" role="toolbar" aria-label={t('レイヤー操作')}>
       <IconButton icon={Plus} label={t('新規レイヤー')} shortcut="⇧+N" size={16} onClick={actions.add}/>
@@ -111,8 +148,17 @@ export function LayersPanel({ doc, store, cache, selected, target, onTarget, act
       <IconButton icon={Trash2} label={t('レイヤーを削除')} size={16} disabled={doc.layers.length < 2} onClick={actions.remove}/>
     </div>
     <button type="button" className="btn wide" disabled={selectedIds.length < 2} onClick={actions.arrange}><Wand2 size={15} aria-hidden="true"/>{t('自動配置')}{selectedIds.length > 1 ? `（${selectedIds.length}）` : ''}</button>
-    <ul className="layer-list" aria-label="レイヤー">
-      {[...doc.layers].reverse().map(layer => <li key={layer.id} className={selectedIds.includes(layer.id) ? 'selected' : ''}>
+    <ul className={`layer-list${drag ? ' dragging' : ''}`} aria-label={t('レイヤー')} ref={list}>
+      {[...doc.layers].reverse().map((layer, i) => <li key={layer.id} className={`${selectedIds.includes(layer.id) ? 'selected' : ''}${drag?.id === layer.id ? ' lifted' : ''}`}
+        style={drag ? { transform: `translateY(${drag.id === layer.id ? drag.dy : shift(i)}px)` } : undefined}>
+        <span className="layer-grip" role="button" tabIndex={0} aria-label={t('{0}をドラッグして並び替え', layer.name)} title={t('ドラッグして並び替え（↑↓キーでも移動）')}
+          onPointerDown={event => startDrag(event, layer.id, i)}
+          onKeyDown={event => {
+            const docIndex = count - 1 - i, to = event.key === 'ArrowUp' ? docIndex + 1 : event.key === 'ArrowDown' ? docIndex - 1 : -1;
+            if (to < 0 || to >= count) return;
+            event.preventDefault();
+            actions.reorder(layer.id, to);
+          }}><GripVertical size={14} aria-hidden="true"/></span>
         {layer.kind === 'raster' && <input type="checkbox" className="layer-select" aria-label={t('{0}を選択', layer.name)} checked={selectedIds.includes(layer.id)} onChange={() => actions.select(layer.id, true)}/>}
         <div className="layer-main" role="button" tabIndex={0} aria-pressed={selectedIds.includes(layer.id)} onClick={event => actions.select(layer.id, event.ctrlKey || event.metaKey || event.shiftKey)}
           onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); actions.select(layer.id, event.ctrlKey || event.metaKey || event.shiftKey); } }}

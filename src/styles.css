@@ -91,7 +91,8 @@ html[data-theme="light"][data-accent="graphite"] { --a1: #55555e; --a1-fill: #5c
   --gap-window: 8px;
   --rail: 52px;
   --inspector: 288px;
-  --font: 'Inter Variable', 'Noto Sans JP Variable', -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', system-ui, sans-serif;
+  /* macOS typography: SF Pro and Hiragino Sans on a Mac; elsewhere Inter and Noto Sans JP, their closest open counterparts. */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Inter Variable', 'Noto Sans JP Variable', sans-serif;
   --mono: 'SF Mono', 'Cascadia Mono', ui-monospace, Consolas, monospace;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out: cubic-bezier(.22, 1, .36, 1);
@@ -879,3 +880,48 @@ html[data-platform="mac"] .home-bar { padding-left: 84px; }
 .home-cta { margin-top: 16px; }
 .home-preset-picker { min-width: 0; }
 .home-preset-picker select { max-width: 320px; min-width: 0; }
+
+/* ---------- Layer reordering ---------- */
+.layer-grip { flex: none; display: grid; place-items: center; width: 18px; height: 32px; margin-left: 2px; border-radius: 6px; color: var(--label-3); cursor: grab; touch-action: none; opacity: .55; transition: opacity var(--t-fast), color var(--t-fast); }
+.layer-list li:hover .layer-grip, .layer-grip:focus-visible { opacity: 1; }
+.layer-grip:hover { color: var(--label); background: var(--hover); }
+.layer-list.dragging { cursor: grabbing; }
+.layer-list.dragging li { position: relative; }
+.layer-list.dragging li:not(.lifted) { transition: transform .22s var(--ease-spring), background var(--t-fast); }
+.layer-list li.lifted { z-index: 2; cursor: grabbing; background: var(--glass-thick); box-shadow: var(--shadow-pop); scale: 1.02; }
+.layer-list li.lifted .layer-grip { color: var(--a1); opacity: 1; cursor: grabbing; }
+
+/* ---------- Home: the library reel ---------- */
+.reel { --reel-h: 168px; position: relative; overflow: hidden; margin: 0 calc(-1 * var(--reel-bleed, 0px)); padding: 10px 0 14px;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent); mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent); }
+.reel-track { display: flex; gap: 14px; padding-right: 14px; width: max-content; animation: reel var(--reel-time) linear infinite; will-change: translate; }
+.reel:hover .reel-track, .reel:focus-within .reel-track { animation-play-state: paused; }
+.reel-item { position: relative; flex: none; height: var(--reel-h); padding: 0; border: 0; border-radius: 14px; overflow: hidden; cursor: pointer; background: var(--surface);
+  box-shadow: inset 0 0 0 0.5px var(--surface-edge), var(--shadow-2); transition: translate .35s var(--ease-spring), scale .35s var(--ease-spring), box-shadow .3s var(--ease-out), opacity .3s; }
+.reel-item img { width: 100%; height: 100%; object-fit: cover; display: block; transition: scale .6s var(--ease-out); }
+.reel:hover .reel-item { opacity: .7; }
+.reel .reel-item:hover, .reel .reel-item:focus-visible { opacity: 1; translate: 0 -6px; scale: 1.04; z-index: 1;
+  box-shadow: 0 0 0 2px var(--a1), 0 18px 40px -14px color-mix(in srgb, var(--a1) 55%, rgba(0, 0, 0, .6)); }
+.reel-item:hover img { scale: 1.06; }
+.reel-caption { position: absolute; inset: auto 0 0 0; display: flex; align-items: center; gap: 8px; padding: 22px 10px 9px; color: #fff; font-size: var(--type-caption); text-align: left;
+  background: linear-gradient(to top, rgba(0, 0, 0, .62), transparent); opacity: 0; translate: 0 6px; transition: opacity .25s var(--ease-out), translate .3s var(--ease-spring); }
+.reel-item:hover .reel-caption, .reel-item:focus-visible .reel-caption { opacity: 1; translate: 0 0; }
+.reel-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
+.reel-edit { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 3px 8px; border-radius: 99px; background: var(--a1-fill); color: var(--a1-ink); font-weight: 600; }
+@keyframes reel { to { translate: calc(-100% / var(--reel-copies)) 0; } }
+@media (max-width: 700px) { .reel { --reel-h: 128px; } }
+/* With motion off the reel becomes a row you scroll yourself. */
+html[data-motion="off"] .reel { overflow-x: auto; -webkit-mask-image: none; mask-image: none; }
+html[data-motion="off"] .reel-track { animation: none; }
+
+/* ---------- Help tips (explanations kept behind a ? button) ---------- */
+.setting-label { display: inline-flex; align-items: center; gap: 4px; }
+.help-tip { position: relative; display: inline-flex; vertical-align: middle; margin-left: 2px; }
+.help-tip-btn { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--label-3); cursor: help; transition: color var(--t-fast), background var(--t-fast); }
+.help-tip-btn:hover, .help-tip.open .help-tip-btn { color: var(--a1); background: color-mix(in srgb, var(--a1) 14%, transparent); }
+.help-tip-pop { position: absolute; z-index: 30; left: calc(100% + 6px); top: 50%; width: max-content; max-width: 240px; padding: 8px 10px; border-radius: 10px;
+  font-size: var(--type-caption); font-weight: 400; line-height: 1.5; color: var(--label); text-align: left; white-space: normal;
+  background: var(--glass-thick); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow-pop);
+  opacity: 0; translate: -4px -50%; scale: .96; transform-origin: left center; pointer-events: none; transition: opacity .16s var(--ease-out), translate .22s var(--ease-spring), scale .22s var(--ease-spring); }
+.help-tip:hover .help-tip-pop, .help-tip.open .help-tip-pop { opacity: 1; translate: 0 -50%; scale: 1; }
+.app-about strong { display: inline-flex; align-items: center; gap: 2px; }

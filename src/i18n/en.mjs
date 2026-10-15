@@ -665,4 +665,12 @@ export default /** @type {Record<string, string>} */ ({
   "その他": "More",
   "プロジェクトとして保存（.imagee）": "Save as Project (.imagee)",
   "ダブルクリックでリセット": "Double-click to reset",
+  "ライブラリを流れるように表示": "Flowing library on Home",
+  "ホーム画面で画像が横にゆっくり流れます。ポインタを乗せると止まります": "Images drift slowly across the Home screen and stop when you point at one.",
+  "レイヤーを並び替え": "Reorder Layers",
+  "システム（SF Pro・ヒラギノ角ゴ）": "System (SF Pro / Hiragino Sans)",
+  "{0}をドラッグして並び替え": "Drag to reorder {0}",
+  "ドラッグして並び替え（↑↓キーでも移動）": "Drag to reorder (or use ↑↓ keys)",
+  "クリックした画像・文字・図形を選んでドラッグで移動します。Shift+ドラッグで選択中のレイヤーを、矢印キーで 1px ずつ動かせます。": "Click an image, text or shape to select and drag it. Shift-drag moves the current layer; arrow keys nudge 1px.",
+  "説明": "About this",
 });
