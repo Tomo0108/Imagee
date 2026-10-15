@@ -132,6 +132,63 @@
     FunctionEnd
   !macroend
 
+  ; Just before installing: close Imagee and remove the old version ourselves. The old uninstaller is run
+  ; without --updated, so it deletes files in place instead of first moving them to the temp folder; that
+  ; move fails when a file is still in use and made the installer stop with "Imagee cannot be closed".
+  ; Afterwards the installer finds no old version to remove. Settings and the library are kept.
+  !macro customPageAfterChangeDir
+    Page custom imageeRemoveOldVersion
+
+    Function imageeRemoveOldVersion
+      ${If} $imageeExisting == "1"
+        Call imageeCloseApp
+        ReadRegStr $R1 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" InstallLocation
+        ReadRegStr $R2 SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" UninstallString
+        ${If} $R1 != ""
+        ${AndIf} $R2 != ""
+        ${AndIf} ${FileExists} "$R1\${UNINSTALL_FILENAME}"
+          ${If} $installMode == "all"
+            StrCpy $R3 "/allusers"
+          ${Else}
+            StrCpy $R3 "/currentuser"
+          ${EndIf}
+          ReadRegStr $R4 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" KeepShortcuts
+          ${If} $R4 == "true"
+          ${AndIf} $imageeUpdate == "1"
+            StrCpy $R3 "$R3 --keep-shortcuts"
+          ${EndIf}
+          InitPluginsDir
+          ClearErrors
+          CopyFiles /SILENT "$R1\${UNINSTALL_FILENAME}" "$PLUGINSDIR\imagee-old-uninstaller.exe"
+          ${IfNot} ${Errors}
+            ExecWait '"$PLUGINSDIR\imagee-old-uninstaller.exe" /S /KEEP_APP_DATA $R3 _?=$R1' $R0
+          ${EndIf}
+          ClearErrors
+        ${EndIf}
+      ${EndIf}
+      Abort
+    FunctionEnd
+
+    ; Ends every Imagee process and waits (up to 5 seconds) until none is left.
+    Function imageeCloseApp
+      nsExec::Exec `"$SYSDIR\taskkill.exe" /F /T /IM "${APP_EXECUTABLE_FILENAME}"`
+      Pop $0
+      StrCpy $1 0
+      ${Do}
+        nsExec::Exec `"$SYSDIR\cmd.exe" /C "$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH | "$SYSDIR\find.exe" /I "${APP_EXECUTABLE_FILENAME}"`
+        Pop $0
+        ${If} $0 != 0
+        ${OrIf} $1 >= 10
+          ${ExitDo}
+        ${EndIf}
+        IntOp $1 $1 + 1
+        Sleep 500
+        nsExec::Exec `"$SYSDIR\taskkill.exe" /F /T /IM "${APP_EXECUTABLE_FILENAME}"`
+        Pop $0
+      ${Loop}
+    FunctionEnd
+  !macroend
+
   ; Updating keeps the existing install mode (just me / all users) instead of asking again.
   !macro customInstallMode
     ${If} $imageeUpdate == "1"
