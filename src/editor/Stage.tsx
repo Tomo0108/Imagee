@@ -18,6 +18,8 @@ interface Props {
   /** Draws selection outlines, previews and the brush cursor in document pixels; `pixel` is one screen pixel in document units. */
   overlay: (context: CanvasRenderingContext2D, pixel: number) => void;
   overlayVersion: number;
+  /** Overrides the tool's cursor (e.g. over a resize handle). */
+  cursor?: string;
 }
 type Gesture =
   | { kind: 'pan'; x: number; y: number; view: View }
@@ -51,7 +53,7 @@ function handlePoints(r: Rect) {
   return HANDLES.map(handle => ({ handle, x: xs[(handle.match(/[we]/)?.[0] || '') as keyof typeof xs], y: ys[(handle.match(/[ns]/)?.[0] || '') as keyof typeof ys] }));
 }
 
-export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checkerboard, aspect, onCrop, onView, onCursor, onSize, onTool, overlay, overlayVersion }: Props) {
+export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checkerboard, aspect, onCrop, onView, onCursor, onSize, onTool, overlay, overlayVersion, cursor: toolCursor }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0, dpr: 1 });
@@ -241,7 +243,7 @@ export function Stage({ doc, image, imageVersion, view, tool, spaceHeld, checker
   }, [liveCrop, onCrop, onTool, doc]);
 
   const active = gesture.current?.kind === 'crop' ? gesture.current.handle : hover;
-  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : active ? HANDLE_CURSOR[active] : TOOL_CURSOR[tool] || 'crosshair';
+  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : active ? HANDLE_CURSOR[active] : toolCursor || TOOL_CURSOR[tool] || 'crosshair';
   return <div ref={host} className="stage" style={{ cursor }} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp}
     onPointerLeave={() => { onCursor(null); setHover(''); if (!pointers.current.size) onTool('hover', null); }}
     onDoubleClick={() => { if (tool === 'hand') onView(centered(content.width, content.height, size.width, size.height, fitScale(content.width, content.height, size.width, size.height))); }}>

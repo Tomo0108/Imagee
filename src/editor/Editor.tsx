@@ -70,6 +70,7 @@ type Action =
   | { kind: 'gradient'; start: Point; end: Point }
   | { kind: 'shape'; start: Point; end: Point; constrain: boolean }
   | { kind: 'move'; id: string; start: Point; origin: Point; box: Box | null; others: Box[]; snap: Snap | null }
+  | { kind: 'scale'; id: string; corner: Corner; box: Box; current: Box; free: boolean; origin: Point; text?: number; shape?: { w: number; h: number }; content?: HTMLCanvasElement; backup?: HTMLCanvasElement; drawn?: Box }
   | { kind: 'heal'; mask: HealMask; key: string; layerId: string; remove: boolean };
 /** Where painting lands: a raster layer or a layer mask, with its position in the document. */
 interface Surface { key: string; layer: Layer; mask: boolean; offset: Point }
@@ -85,6 +86,17 @@ const snapLine = (a: Point, b: Point): Point => {
   return { x: a.x + Math.cos(angle) * length, y: a.y + Math.sin(angle) * length };
 };
 type Snap = { guides: Guide[]; gaps: Gap[]; box: Box };
+type Corner = 'nw' | 'ne' | 'sw' | 'se';
+const CORNERS: Corner[] = ['nw', 'ne', 'sw', 'se'];
+const cornerAt = (b: Box, corner: Corner): Point => ({ x: corner.endsWith('w') ? b.x : b.x + b.w, y: corner.startsWith('n') ? b.y : b.y + b.h });
+/** The box after dragging `corner` to `p`, anchored at the opposite corner; proportional unless `free`. */
+function scaledBox(b: Box, corner: Corner, p: Point, free: boolean): Box {
+  const anchor = cornerAt(b, (corner[0] === 'n' ? 's' : 'n') + (corner[1] === 'w' ? 'e' : 'w') as Corner);
+  let w = Math.max(4, Math.abs(p.x - anchor.x)), h = Math.max(4, Math.abs(p.y - anchor.y));
+  if (!free) { const k = Math.max(w / b.w, h / b.h); w = Math.max(4, b.w * k); h = Math.max(4, b.h * k); }
+  w = Math.round(w); h = Math.round(h);
+  return { x: corner.endsWith('w') ? anchor.x - w : anchor.x, y: corner.startsWith('n') ? anchor.y - h : anchor.y, w, h };
+}
 const BRUSHES: Tool[] = ['brush', 'eraser', 'heal', 'remove', 'clone'];
 const luminance = (hex: string) => { const [r, g, b] = hexToRgb(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const clearColor = (hex: string) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},0)`; };
@@ -152,6 +164,8 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const savedRef = useRef<Doc | null>(null);
   const setSavedDoc = useCallback((d: Doc) => { savedRef.current = d; setSavedDocState(d); }, []);
   const [closing, setClosing] = useState(false);
+  /** A resize cursor while the pointer is over a corner handle of the chosen object. */
+  const [stageCursor, setStageCursor] = useState('');
   const cache = useMemo(() => new LayerCache(), []);
   const work = useRef<HTMLCanvasElement | null>(null);
   const historyRef = useRef<History<Doc> | null>(null);
@@ -466,11 +480,19 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const scaleRef = useRef(1);
   scaleRef.current = view?.scale ?? 1;
 
+  /** Whether clicking passes over this layer: a blank (one-colour) canvas background under other objects. */
+  const skipsBackground = useCallback((d: Doc, layer: Layer) => {
+    const objects = d.layers.filter(l => l.visible && l.kind !== 'adjust');
+    return objects.length > 1 && layer === d.layers[0] && layer.kind === 'raster' && coversCanvas(layer, d, store, true);
+  }, [store]);
   /** The topmost visible image, text or shape under a point: its own pixels (and mask) decide, not its box. */
   const hitLayer = useCallback((d: Doc, p: Point): Layer | null => {
+    // A blank canvas background is not picked by clicking once other objects sit on it.
+    const skipBackground = skipsBackground(d, d.layers[0]);
     for (let i = d.layers.length - 1; i >= 0; i--) {
       const layer = d.layers[i];
       if (!layer.visible || layer.kind === 'adjust' || layer.opacity === 0) continue;
+      if (i === 0 && skipBackground) continue;
       const box = contentBounds(layer);
       if (!box || p.x < box.x || p.y < box.y || p.x >= box.x + box.w || p.y >= box.y + box.h) continue;
       const opaque = (surface: CanvasImageSource | undefined | null, x: number, y: number) => {
@@ -490,6 +512,29 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       return layer;
     }
     return null;
+  }, [contentBounds, store, skipsBackground]);
+  /** Which corner handle of the layer's box is under the pointer, within a few screen pixels. */
+  const cornerHit = useCallback((layer: Layer, p: Point): Corner | null => {
+    const d = historyRef.current?.present;
+    if (!d || skipsBackground(d, layer)) return null;
+    const b = contentBounds(layer);
+    if (!b) return null;
+    const r = 9 / scaleRef.current;
+    return CORNERS.find(corner => { const c = cornerAt(b, corner); return Math.abs(p.x - c.x) <= r && Math.abs(p.y - c.y) <= r; }) ?? null;
+  }, [contentBounds, skipsBackground]);
+  const startScale = useCallback((layer: Layer, corner: Corner, free: boolean): Action | null => {
+    const b = contentBounds(layer);
+    if (!b || layer.kind === 'adjust') return null;
+    const base = { kind: 'scale' as const, id: layer.id, corner, box: b, current: b, free: free && layer.kind !== 'text', origin: { x: layer.x, y: layer.y } };
+    if (layer.kind === 'text') return { ...base, text: layer.text.size };
+    if (layer.kind === 'shape') return { ...base, shape: { w: layer.shape.w, h: layer.shape.h } };
+    const surface = store.get(layer.id);
+    if (!surface) return null;
+    // The content alone (to draw scaled) and the whole surface (to restore before recording the change).
+    const content = makeCanvas(b.w, b.h), backup = makeCanvas(surface.width, surface.height);
+    content.getContext('2d')!.drawImage(surface, b.x - layer.x, b.y - layer.y, b.w, b.h, 0, 0, b.w, b.h);
+    backup.getContext('2d')!.drawImage(surface, 0, 0);
+    return { ...base, content, backup, drawn: b };
   }, [contentBounds, store]);
 
   const begin = useCallback((p: ToolPointer, d: Doc) => {
@@ -497,9 +542,14 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     const layer = d.layers.find(l => l.id === d.selected)!;
     switch (tool) {
       case 'move': {
-        // Clicking an image, text or shape picks its layer (Shift keeps the current one).
+        // The corners of the chosen object resize it (proportionally; Shift for free).
+        const corner = layer.kind !== 'adjust' ? cornerHit(layer, p) : null;
+        if (corner) { action.current = startScale(layer, corner, p.shift); break; }
+        // Clicking an image, text or shape picks its layer (Shift keeps the current one); empty canvas does nothing.
         const hit = p.shift ? null : hitLayer(d, p);
-        const target = hit ?? layer;
+        const own = contentBounds(layer);
+        const target = hit ?? (p.shift || (own && p.x >= own.x && p.y >= own.y && p.x < own.x + own.w && p.y < own.y + own.h && !skipsBackground(d, layer)) ? layer : null);
+        if (!target) break;
         if (hit && hit.id !== layer.id) selectLayer(hit.id);
         // Smart guides: what the object can line up with (the canvas, and every other visible object).
         const others = d.layers.filter(l => l.id !== target.id && l.visible).map(contentBounds).filter((b): b is Box => !!b);
@@ -583,7 +633,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       }
     }
     bumpOverlay();
-  }, [tool, settings, colors, store, cache, surfaceFor, pickColor, refresh, commitSurface, insertLayer, selectLayer, setSelection, onToast, hitLayer, contentBounds]);
+  }, [tool, settings, colors, store, cache, surfaceFor, pickColor, refresh, commitSurface, insertLayer, selectLayer, setSelection, onToast, hitLayer, contentBounds, cornerHit, startScale, skipsBackground]);
 
   const move = useCallback((p: ToolPointer) => {
     const a = action.current;
@@ -594,6 +644,25 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     else if (a.kind === 'lasso') { const last = a.points[a.points.length - 1]; if (Math.hypot(p.x - last.x, p.y - last.y) > 1) a.points.push(p); }
     else if (a.kind === 'gradient') a.end = p.shift ? snapLine(a.start, p) : p;
     else if (a.kind === 'shape') { a.end = p; a.constrain = p.shift; }
+    else if (a.kind === 'scale') {
+      const next = scaledBox(a.box, a.corner, p, a.text === undefined && (a.free || p.shift));
+      a.current = next;
+      const d = historyRef.current?.present, layer = d?.layers.find(l => l.id === a.id);
+      if (!d || !layer) return;
+      const kx = next.w / a.box.w, ky = next.h / a.box.h;
+      if (layer.kind === 'text' && a.text !== undefined) {
+        updateLayer(a.id, { text: { ...layer.text, size: Math.max(1, Math.round(a.text * kx * 10) / 10) }, x: Math.round(a.origin.x + (next.x - a.box.x) + (a.origin.x - a.box.x) * (kx - 1)), y: Math.round(a.origin.y + (next.y - a.box.y) + (a.origin.y - a.box.y) * (kx - 1)) } as Partial<Layer>, t('拡大・縮小'), true);
+      } else if (layer.kind === 'shape' && a.shape) {
+        updateLayer(a.id, { shape: { ...layer.shape, w: Math.round(a.shape.w * kx), h: Math.round(a.shape.h * ky) }, x: Math.round(a.origin.x + (next.x - a.box.x) + (a.origin.x - a.box.x) * (kx - 1)), y: Math.round(a.origin.y + (next.y - a.box.y) + (a.origin.y - a.box.y) * (ky - 1)) } as Partial<Layer>, t('拡大・縮小'), true);
+      } else if (layer.kind === 'raster' && a.content) {
+        // Live preview straight on the surface; the change is recorded once when the drag ends.
+        const c = store.context(a.id);
+        c.save(); c.clearRect(0, 0, c.canvas.width, c.canvas.height); c.imageSmoothingQuality = 'high';
+        c.drawImage(a.content, next.x - layer.x, next.y - layer.y, next.w, next.h); c.restore();
+        refresh(union(a.drawn ?? null, next));
+        a.drawn = next;
+      }
+    }
     else if (a.kind === 'move') {
       let dx = Math.round(p.x - a.start.x), dy = Math.round(p.y - a.start.y);
       const d = historyRef.current?.present;
@@ -607,7 +676,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       updateLayer(a.id, { x: a.origin.x + dx, y: a.origin.y + dy }, t('移動'), true);
     }
     bumpOverlay();
-  }, [refresh, updateLayer]);
+  }, [refresh, updateLayer, store]);
 
   const finish = useCallback(() => {
     const a = action.current, d = historyRef.current?.present;
@@ -684,18 +753,40 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       const rev = healSurface(store, a.key, a.mask);
       if (rev !== null) commitSurface(a.layerId, false, rev, t('スポット修復'), false);
     } else if (a.kind === 'move') { a.snap = null; endGesture(); }
+    else if (a.kind === 'scale') {
+      endGesture();
+      const layer = d.layers.find(l => l.id === a.id);
+      if (layer?.kind === 'raster' && a.content && a.backup) {
+        const c = store.context(a.id), next = a.current;
+        c.save(); c.globalCompositeOperation = 'copy'; c.drawImage(a.backup, 0, 0); c.restore();
+        const unchanged = next.x === a.box.x && next.y === a.box.y && next.w === a.box.w && next.h === a.box.h;
+        if (!unchanged) {
+          const rev = editSurface(store, a.id, { x: 0, y: 0, w: c.canvas.width, h: c.canvas.height }, context => {
+            context.clearRect(0, 0, context.canvas.width, context.canvas.height); context.imageSmoothingQuality = 'high';
+            context.drawImage(a.content!, next.x - layer.x, next.y - layer.y, next.w, next.h);
+          });
+          if (rev !== null) commitSurface(a.id, false, rev, t('拡大・縮小'), false);
+        } else refresh(union(a.drawn ?? null, a.box));
+        a.content.width = a.content.height = a.backup.width = a.backup.height = 0;
+      }
+    }
     bumpOverlay();
-  }, [store, cache, adjuster, settings, colors, surfaceFor, commitSurface, insertLayer, setSelection, endGesture, fillArea]);
+  }, [store, cache, adjuster, settings, colors, surfaceFor, commitSurface, insertLayer, setSelection, endGesture, fillArea, refresh]);
 
   const onTool = useCallback((phase: ToolPhase, p: ToolPointer | null) => {
     const d = historyRef.current?.present;
     if (!d) return;
-    if (phase === 'hover') { hover.current = p; if (BRUSHES.includes(tool)) bumpOverlay(); return; }
+    if (phase === 'hover') {
+      hover.current = p;
+      if (BRUSHES.includes(tool)) bumpOverlay();
+      if (tool === 'move') { const layer = d.layers.find(l => l.id === d.selected); const corner = p && layer && layer.kind !== 'adjust' ? cornerHit(layer, p) : null; setStageCursor(corner ? (corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize') : ''); }
+      return;
+    }
     if (phase === 'up') { if (p) move(p); finish(); return; }
     if (!p) return;
     hover.current = p;
     if (phase === 'down') begin(p, d); else move(p);
-  }, [tool, begin, move, finish]);
+  }, [tool, begin, move, finish, cornerHit]);
 
   /** Selection outline, previews of the action in progress and the brush cursor, in document pixels. */
   const overlay = useCallback((c: CanvasRenderingContext2D, px: number) => {
@@ -709,11 +800,20 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     const sel = selectionRef.current;
     if (sel) { c.save(); c.imageSmoothingEnabled = sel.edges.width > d.width / px; c.drawImage(sel.edges, 0, 0, d.width, d.height); c.restore(); }
     const layer = d.layers.find(l => l.id === d.selected);
-    if (layer && (tool === 'move' || (tool === 'text' && layer.kind === 'text'))) {
-      const b = cache.bounds(layer, store);
-      if (b) dashed(() => c.rect(b.x, b.y, b.w, b.h));
-    }
     const a = action.current;
+    if (layer && (tool === 'move' || (tool === 'text' && layer.kind === 'text')) && !skipsBackground(d, layer)) {
+      // The chosen object's own outline (not its whole layer), with corner handles for resizing.
+      const b = a?.kind === 'scale' ? a.current : contentBounds(layer);
+      if (b) {
+        dashed(() => c.rect(b.x, b.y, b.w, b.h));
+        if (tool === 'move' && layer.kind !== 'adjust') {
+          const r = 4.5 * px;
+          c.save(); c.fillStyle = '#fff'; c.strokeStyle = '#1d1d1f'; c.lineWidth = px;
+          for (const corner of CORNERS) { const q = cornerAt(b, corner); c.beginPath(); c.rect(q.x - r, q.y - r, r * 2, r * 2); c.fill(); c.stroke(); }
+          c.restore();
+        }
+      }
+    }
     if (a?.kind === 'select') { const b = box(a.start, a.end, a.square); dashed(() => a.shape === 'rect' ? c.rect(b.x, b.y, b.w, b.h) : c.ellipse(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2)); }
     else if (a?.kind === 'lasso') dashed(() => a.points.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
     else if (a?.kind === 'gradient') {
@@ -747,7 +847,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       c.lineWidth = 3 * px; c.strokeStyle = 'rgba(0,0,0,.55)'; c.stroke();
       c.lineWidth = px; c.strokeStyle = '#fff'; c.stroke(); c.restore();
     }
-  }, [tool, settings, colors, cache, store]);
+  }, [tool, settings, colors, cache, store, contentBounds, skipsBackground]);
 
   const aspectRatio = useCallback((id: string) => {
     if (!doc) return 0;
@@ -1363,7 +1463,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       <div className="stage-wrap" onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
         onDrop={event => { const files = [...event.dataTransfer.files].filter(isImageFile); if (files.length) { event.preventDefault(); void addImages(files); } }}>
         <Stage doc={shown} image={before ? work.current : (version ? adjuster.canvas : null)} imageVersion={version + (before ? 0.5 : 0)} view={view} tool={tool} spaceHeld={space} checkerboard={prefs.checkerboard}
-          aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
+          aspect={aspectRatio(aspectId)} onCrop={onCrop} onView={setView} onCursor={setCursor} onSize={setViewport} onTool={onTool} cursor={tool === 'move' ? stageCursor : ''} overlay={overlay} overlayVersion={overlayVersion + (selection ? 0.5 : 0)}/>
         {before && <div className="stage-badge">{t('補正前')}</div>}
         {aiBusy && tab !== 'ai' && <div className="ai-chip" role="status"><span className="spinner" aria-hidden="true"/><span>{aiBusy.label}{aiBusy.progress !== null && ` ${Math.round(aiBusy.progress * 100)}%`}</span><button type="button" className="btn ghost small" onClick={cancelAi}>{t('中止')}</button></div>}
         {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand} onRefine={refine} hint={hint} onHelp={() => setHelp(true)}/>}
@@ -1422,11 +1522,15 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
 /** Sets a layer's mask surface to `source` (or all white). An existing surface is edited rather than replaced,
  *  so undo can still reach its earlier revisions. */
 /** A raster layer that is opaque over the whole canvas, like a background. */
-function coversCanvas(layer: RasterLayer, d: Doc, store: PixelStore): boolean {
+function coversCanvas(layer: RasterLayer, d: Doc, store: PixelStore, blank = false): boolean {
   const surface = store.get(layer.id);
   if (!surface || layer.x !== 0 || layer.y !== 0 || surface.width < d.width || surface.height < d.height) return false;
   const c = surface.getContext('2d')!, w = d.width - 1, h = d.height - 1;
-  return [[0, 0], [w, 0], [0, h], [w, h], [w >> 1, h >> 1]].every(([x, y]) => c.getImageData(x, y, 1, 1).data[3] === 255);
+  const points = [[0, 0], [w, 0], [0, h], [w, h], [w >> 1, h >> 1], [w >> 2, h >> 2], [(w * 3) >> 2, h >> 2], [w >> 2, (h * 3) >> 2], [(w * 3) >> 2, (h * 3) >> 2]];
+  const pixels = points.map(([x, y]) => [...c.getImageData(x, y, 1, 1).data]);
+  if (!pixels.every(px => px[3] === 255)) return false;
+  // A blank canvas: every sample the same colour.
+  return !blank || pixels.every(px => px.every((v, i) => Math.abs(v - pixels[0][i]) <= 2));
 }
 
 function replaceMask(store: PixelStore, key: string, width: number, height: number, source?: CanvasImageSource): number | null {
