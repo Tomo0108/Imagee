@@ -11,6 +11,11 @@
   Var imageeRadioUpdate
   Var imageeRadioCustom
 
+  ; Shorter texts than the defaults on the folder and finish pages.
+  !define MUI_DIRECTORYPAGE_TEXT_TOP "$(imageeDirectoryText)"
+  !define MUI_FINISHPAGE_TITLE "$(imageeFinishTitle)"
+  !define MUI_FINISHPAGE_TEXT "$(imageeFinishText)"
+
   ; The installer's own "updated" flag (--updated, used by auto-updates) now also covers our update choice,
   ; so every page and step that already handles updates behaves the same way.
   !undef isUpdated
@@ -22,24 +27,26 @@
   !define isUpdated `"" isUpdatedOrChosen ""`
 
   !macro customHeader
-    LangString imageeUpdateTitle ${LANG_JAPANESE} "Imagee はインストール済みです"
-    LangString imageeUpdateTitle ${LANG_ENGLISH} "Imagee is already installed"
-    LangString imageeUpdateSubtitle ${LANG_JAPANESE} "インストールの方法を選んでください。"
-    LangString imageeUpdateSubtitle ${LANG_ENGLISH} "Choose how to install."
-    LangString imageeUpdateIntro ${LANG_JAPANESE} "このパソコンには Imagee $imageeOldVersion がインストールされています。Imagee ${VERSION} をどのようにインストールしますか？"
-    LangString imageeUpdateIntro ${LANG_ENGLISH} "Imagee $imageeOldVersion is installed on this computer. How would you like to install Imagee ${VERSION}?"
+    LangString imageeUpdateTitle ${LANG_JAPANESE} "Imagee をアップデート"
+    LangString imageeUpdateTitle ${LANG_ENGLISH} "Update Imagee"
+    LangString imageeUpdateSubtitle ${LANG_JAPANESE} "$imageeOldVersion → ${VERSION}"
+    LangString imageeUpdateSubtitle ${LANG_ENGLISH} "$imageeOldVersion → ${VERSION}"
     LangString imageeUpdateOption ${LANG_JAPANESE} "アップデートする（おすすめ）"
     LangString imageeUpdateOption ${LANG_ENGLISH} "Update (recommended)"
-    LangString imageeUpdateOptionNote ${LANG_JAPANESE} "今と同じ場所に新しいバージョンを上書きします。設定、ショートカット、ライブラリの画像はそのまま引き継がれます。"
-    LangString imageeUpdateOptionNote ${LANG_ENGLISH} "Installs the new version over the current one, in the same place. Your settings, shortcuts and library are kept."
-    LangString imageeCustomOption ${LANG_JAPANESE} "インストール方法と場所を選び直す"
-    LangString imageeCustomOption ${LANG_ENGLISH} "Choose how and where to install"
-    LangString imageeCustomOptionNote ${LANG_JAPANESE} "使うユーザーとインストール先のフォルダーを、次の画面で選び直します。"
-    LangString imageeCustomOptionNote ${LANG_ENGLISH} "Pick who it is installed for and the folder on the next pages."
+    LangString imageeUpdateOptionNote ${LANG_JAPANESE} "設定とライブラリはそのまま引き継がれます。"
+    LangString imageeUpdateOptionNote ${LANG_ENGLISH} "Your settings and library are kept."
+    LangString imageeCustomOption ${LANG_JAPANESE} "インストール先を選び直す"
+    LangString imageeCustomOption ${LANG_ENGLISH} "Choose where to install"
+    LangString imageeDirectoryText ${LANG_JAPANESE} "インストール先のフォルダーを選んでください。"
+    LangString imageeDirectoryText ${LANG_ENGLISH} "Choose the folder to install Imagee in."
+    LangString imageeFinishTitle ${LANG_JAPANESE} "準備ができました"
+    LangString imageeFinishTitle ${LANG_ENGLISH} "Imagee is ready"
+    LangString imageeFinishText ${LANG_JAPANESE} "Imagee ${VERSION} をインストールしました。"
+    LangString imageeFinishText ${LANG_ENGLISH} "Imagee ${VERSION} has been installed."
     LangString imageeUpdateButton ${LANG_JAPANESE} "アップデート"
     LangString imageeUpdateButton ${LANG_ENGLISH} "&Update"
-    LangString imageeOldRemoveSkipped ${LANG_JAPANESE} "古いバージョンのファイルを先に削除できなかったため、上書きしてアップデートします（コード $R0）。"
-    LangString imageeOldRemoveSkipped ${LANG_ENGLISH} "The old version's files could not be removed first, so they are being overwritten instead (code $R0)."
+    LangString imageeOldRemoveSkipped ${LANG_JAPANESE} "古いファイルを上書きしてアップデートします（コード $R0）。"
+    LangString imageeOldRemoveSkipped ${LANG_ENGLISH} "Overwriting the old files instead (code $R0)."
   !macroend
 
   !macro customInit
@@ -92,21 +99,17 @@
         Abort
       ${EndIf}
 
-      ${NSD_CreateLabel} 0 0 100% 24u "$(imageeUpdateIntro)"
-      Pop $0
-
-      ${NSD_CreateRadioButton} 0 34u 100% 12u "$(imageeUpdateOption)"
+      ${NSD_CreateRadioButton} 0 6u 100% 12u "$(imageeUpdateOption)"
       Pop $imageeRadioUpdate
       ${NSD_AddStyle} $imageeRadioUpdate ${WS_GROUP}
       ${NSD_OnClick} $imageeRadioUpdate imageeUpdatePageClick
-      ${NSD_CreateLabel} 12u 48u -12u 24u "$(imageeUpdateOptionNote)"
+      ${NSD_CreateLabel} 13u 20u -13u 10u "$(imageeUpdateOptionNote)"
       Pop $0
+      SetCtlColors $0 808080 transparent
 
-      ${NSD_CreateRadioButton} 0 80u 100% 12u "$(imageeCustomOption)"
+      ${NSD_CreateRadioButton} 0 40u 100% 12u "$(imageeCustomOption)"
       Pop $imageeRadioCustom
       ${NSD_OnClick} $imageeRadioCustom imageeUpdatePageClick
-      ${NSD_CreateLabel} 12u 94u -12u 24u "$(imageeCustomOptionNote)"
-      Pop $0
 
       ${If} $imageeUpdate == "1"
         ${NSD_Check} $imageeRadioUpdate

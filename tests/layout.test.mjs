@@ -16,3 +16,14 @@ test('mixed image sizes fit the canvas without overlap or cropping', () => {
 test('empty layout', () => {
   assert.deepEqual(arrangeImages([], 100, 100), []);
 });
+test('images fill most of the canvas and keep their order', () => {
+  const landscape = Array.from({ length: 4 }, () => ({ w: 1600, h: 900 }));
+  const boxes = arrangeImages(landscape, 1920, 1080);
+  const area = boxes.reduce((total, box) => total + box.w * box.h, 0);
+  assert.ok(area / (1920 * 1080) > .7, `covers ${area / (1920 * 1080)}`);
+  // Reading order: each image starts to the right of, or below, the one before it.
+  boxes.slice(1).forEach((box, i) => assert.ok(box.y > boxes[i].y + 1 || (Math.abs(box.y - boxes[i].y) <= 1 && box.x > boxes[i].x)));
+  const mixed = arrangeImages([{ w: 900, h: 1200 }, { w: 1600, h: 900 }, { w: 1200, h: 1200 }], 1920, 1080);
+  const covered = mixed.reduce((total, box) => total + box.w * box.h, 0) / (1920 * 1080);
+  assert.ok(covered > .6, `mixed covers ${covered}`);
+});

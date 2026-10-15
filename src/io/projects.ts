@@ -31,11 +31,12 @@ export async function exportImagee(project: Project, source: Blob, pixels: Map<s
   return new Blob([zipSync(files) as Uint8Array<ArrayBuffer>], { type: 'application/x-imagee' });
 }
 
-/** Packs a project from the library (its stored image, surfaces and the LUTs its edits use). */
-export async function exportStoredProject(project: Project): Promise<Blob> {
+/** Packs a project from the library (its stored image, surfaces and the LUTs its edits use).
+ *  `pixels` replaces the stored surfaces, for exporting edits that have not been saved to the library. */
+export async function exportStoredProject(project: Project, pixels?: Map<string, Blob>): Promise<Blob> {
   const source = await readSource(project.id);
   if (!source) throw new Error(t('元の画像が見つかりません。'));
-  const pixels = await readPixels(project.id);
+  pixels ??= await readPixels(project.id);
   const used = new Set<string>();
   const e = project.edits;
   if (e?.color?.lut) used.add(e.color.lut.id);

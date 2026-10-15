@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Sparkles, ArrowLeft, Check, CircleHelp, ClipboardPaste, Copy, Expand, ImagePlus, Mountain, PaintBucket, Scaling, Scissors, Search, SquareDashed, SquareMinus, Trash2, UserRound, Wand2, ZoomIn, ZoomOut, Eraser, ArrowUp, ArrowDown, Crop, FileDown, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings, SlidersHorizontal, Undo2, SplitSquareHorizontal } from 'lucide-react';
+import { Sparkles, ArrowLeft, Check, CircleHelp, ClipboardPaste, Copy, Expand, ImagePlus, Mountain, PaintBucket, Scaling, Scissors, Search, SquareDashed, SquareMinus, Trash2, UserRound, Wand2, ZoomIn, ZoomOut, Eraser, ArrowUp, ArrowDown, Crop, FileDown, Download, FlipHorizontal2, FlipVertical2, History as HistoryIcon, Info, Layers, Maximize, Minus, Plus, Redo2, RotateCcw, RotateCw, Settings, SlidersHorizontal, Undo2, SplitSquareHorizontal, Save } from 'lucide-react';
 import type { Project } from '../store';
 import { writePixels } from '../store';
 import { decode, histogram, thumbnail, toBlob, canvas as makeCanvas } from '../imaging';
@@ -26,7 +26,7 @@ import { CommandPalette, type Command } from './CommandPalette';
 import { HelpSheet } from './HelpSheet';
 import { ResizeSheet, type ResizeMode, type ResizeRequest } from './ResizeSheet';
 import { arrangeImages } from '../lib/layout.mjs';
-import { pickFile, pickImages, saveBlob } from '../platform';
+import { pickFile, pickImages, platform, saveBlob } from '../platform';
 import { NEUTRAL_COLOR, parseCube, type ColorOps } from '../lib/color.mjs';
 import { addLut, readLuts, removeLut } from '../store';
 import { loadUserPresets, storeUserPresets, type UserPreset } from './color-ui';
@@ -34,7 +34,7 @@ import type { Histogram } from '../imaging';
 import { baseName, exportName, isImageFile } from '../lib/files.mjs';
 import { AiPanel, type AiBusy } from './AiPanel';
 import { cancelAi, removeArea, skyMaskCanvas, subjectMask, upscale } from '../ai/ai';
-import { IconButton, Slider, mod } from '../ui';
+import { IconButton, Modal, Slider, mod } from '../ui';
 import { t } from '../i18n/index.mjs';
 
 type Tab = 'adjust' | 'layers' | 'ai' | 'history' | 'info';
@@ -89,11 +89,24 @@ const BRUSHES: Tool[] = ['brush', 'eraser', 'heal', 'remove', 'clone'];
 const luminance = (hex: string) => { const [r, g, b] = hexToRgb(hex); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const clearColor = (hex: string) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},0)`; };
 
+/** Images edited earlier in this session keep their undo history (and its pixels) until the app closes,
+ *  so edits that were not saved can still be brought back with redo. The few most recent are kept. */
+type Session = { history: History<Doc>; store: PixelStore; saved: Doc };
+const sessions = new Map<string, Session>();
+const SESSIONS = 3;
+/** The history moved to the saved state; unsaved steps stay ahead of it as redo. */
+function rewind(history: History<Doc>, saved: Doc): History<Doc> {
+  const states = [...history.past.map(entry => entry.state), history.present, ...history.future.map(entry => entry.state)];
+  const index = states.indexOf(saved);
+  if (index >= 0) return jump(history, index);
+  return { past: [], present: saved, label: t('開く'), future: [{ state: history.present, label: history.label }] };
+}
+
 export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings, onAddImage }: Props) {
   const [history, setHistory] = useState<History<Doc> | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [tool, setToolState] = useState<Tool>('hand');
+  const [tool, setToolState] = useState<Tool>('move');
   const [space, setSpace] = useState(false);
   const [before, setBefore] = useState(false);
   const [tab, setTabState] = useState<Tab>('layers');
@@ -132,7 +145,13 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   /** The area being filled by object removal, shown until the result arrives. */
   const removing = useRef<{ canvas: HTMLCanvasElement; offset: Point } | null>(null);
   const adjuster = useMemo(() => new Adjuster(), []);
-  const store = useMemo(() => new PixelStore(), []);
+  const session = useMemo(() => sessions.get(project.id), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const store = useMemo(() => session?.store ?? new PixelStore(), [session]);
+  /** The document as last saved to the library; anything else is an unsaved change. */
+  const [savedDoc, setSavedDocState] = useState<Doc | null>(null);
+  const savedRef = useRef<Doc | null>(null);
+  const setSavedDoc = useCallback((d: Doc) => { savedRef.current = d; setSavedDocState(d); }, []);
+  const [closing, setClosing] = useState(false);
   const cache = useMemo(() => new LayerCache(), []);
   const work = useRef<HTMLCanvasElement | null>(null);
   const historyRef = useRef<History<Doc> | null>(null);
@@ -172,9 +191,17 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (session) {
+        const restored = rewind(session.history, session.saved);
+        work.current = workCanvas(restored.present, adjuster.maxSize);
+        setSavedDoc(session.saved);
+        apply(restored);
+        return;
+      }
       const doc = await loadDoc(project, store, () => cancelled);
       if (!doc) return;
       work.current = workCanvas(doc, adjuster.maxSize);
+      setSavedDoc(doc);
       apply(createHistory<Doc>(doc));
     })().catch(e => !cancelled && setError(e.message));
     return () => { cancelled = true; };
@@ -229,20 +256,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     });
   }, [adjuster, store, cache]);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
-  useEffect(() => { setHint(!hintSeen('hand')); }, []);
+  useEffect(() => { setHint(!hintSeen('move')); }, []);
   useEffect(() => { if (!hint) return; const timer = setTimeout(() => setHint(false), 12000); return () => clearTimeout(timer); }, [hint, tool]);
   // Leaving the editor stops AI work, so a late result cannot change or open anything.
   useEffect(() => () => cancelAi(), []);
 
-  // Autosave: edits as JSON with the project, painted surfaces as PNG in their own store.
-  const edits = useMemo(() => doc && savedEdits(doc), [doc?.layers, doc?.adjust, doc?.color, doc?.geometry, doc?.selected, doc?.width, doc?.height]); // eslint-disable-line react-hooks/exhaustive-deps
-  const firstEdits = useRef(true);
-  useEffect(() => {
-    if (!edits) return;
-    if (firstEdits.current) { firstEdits.current = false; return; }
-    const timer = setTimeout(() => onUpdate({ ...projectRef.current, edits, edited: Date.now() }), 400);
-    return () => clearTimeout(timer);
-  }, [edits, onUpdate]);
+  // Saving is explicit: edits as JSON with the project, painted surfaces as PNG in their own store.
   const saving = useRef(Promise.resolve());
   const savedKeys = useRef('');
   const savePixels = useCallback(() => {
@@ -268,6 +287,15 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     }).catch(() => onToast(t('描画内容を保存できませんでした。空き容量を確認してください。')));
     return saving.current;
   }, [store, onToast]);
+  /** The document's painted surfaces as PNGs, straight from memory (they may not be saved yet). */
+  const currentPixels = useCallback(async (d: Doc) => {
+    const pixels = new Map<string, Blob>();
+    for (const layer of d.layers) {
+      if (layer.kind === 'raster') { store.sync(layer.id, layer.rev); const surface = store.get(layer.id); if (surface) pixels.set(layer.id, await toBlob(surface, 'image/png')); }
+      if (layer.mask) { const key = maskKey(layer.id); store.sync(key, layer.mask.rev); const surface = store.get(key); if (surface) pixels.set(key, await toBlob(surface, 'image/png')); }
+    }
+    return pixels;
+  }, [store]);
   /** Saves the document with its layers: as a PSD, or as an Imagee project file. */
   const saveProject = useCallback(async (kind: 'psd' | 'imagee') => {
     const d = historyRef.current?.present;
@@ -276,16 +304,11 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       const io = await import('../io/projects');
       let blob: Blob;
       if (kind === 'psd') blob = await io.exportPsd(d, store, cache, fullImage() ?? adjuster.canvas);
-      else { await savePixels(); blob = await io.exportStoredProject({ ...projectRef.current, edits: savedEdits(d) }); }
+      else blob = await io.exportStoredProject({ ...projectRef.current, edits: savedEdits(d) }, await currentPixels(d));
       const saved = await saveBlob(blob, exportName(projectRef.current.name, kind), kind, kind === 'psd' ? t('Photoshop ドキュメント') : t('Imagee プロジェクト'));
       if (saved) onToast(t('「{0}」を保存しました。', saved));
     } catch (e) { onToast((e as Error).message || t('保存できませんでした。')); }
-  }, [store, cache, adjuster, fullImage, savePixels, onToast]);
-  useEffect(() => {
-    if (!doc) return;
-    const timer = setTimeout(savePixels, 1000);
-    return () => clearTimeout(timer);
-  }, [doc?.layers, savePixels]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [store, cache, adjuster, fullImage, currentPixels, onToast]);
 
   const change = useCallback((recipe: (doc: Doc) => Doc, label: string, gesture = false) => {
     const h = historyRef.current;
@@ -898,8 +921,12 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   const arrange = () => {
     const d = historyRef.current?.present;
     if (!d) return;
-    const images = d.layers.filter(layer => selectedIds.includes(layer.id) && layer.kind === 'raster' && layer.visible);
-    if (images.length < 2) { onToast(t('画像レイヤーを2枚以上選択してください')); return; }
+    // The chosen layers, or every image layer when fewer than two are chosen (except a background filling the
+    // whole canvas). They are laid out in the order the layer list shows them, top first.
+    const candidates = d.layers.filter(layer => layer.kind === 'raster' && layer.visible);
+    const chosen = candidates.filter(layer => selectedIds.includes(layer.id));
+    const images = (chosen.length >= 2 ? chosen : candidates.filter((layer, index) => !(index === 0 && d.layers[0] === layer && coversCanvas(layer as RasterLayer, d, store)))).reverse();
+    if (images.length < 2) { onToast(t('配置する画像レイヤーが2枚以上必要です')); return; }
     const sources = images.map(layer => {
       const source = store.get(layer.id)!;
       const data = source.getContext('2d')!.getImageData(0, 0, source.width, source.height).data;
@@ -1107,6 +1134,33 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   }), [selectLayer, updateLayer, endGesture, insertLayer, newRaster, addImages, change, store, cache, multiIds, doc]);
 
   /** Everything the feature search can find and run. */
+  // Rendered once when the sheet opens (at full size, which can take a moment for large images).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const exportImage = useMemo(() => exporting && version ? fullImage() : null, [exporting, version, fullImage]);
+  const latest = useRef<{ doc?: Doc; image?: HTMLCanvasElement }>({});
+  latest.current = { doc, image: version ? adjuster.canvas : undefined };
+  const dirty = !!doc && !!savedDoc && doc !== savedDoc;
+  /** Saves the current edits, painted surfaces and a fresh thumbnail to the library. */
+  const saveToLibrary = useCallback(async () => {
+    const { doc: last, image } = latest.current;
+    if (!last) return;
+    await savePixels();
+    let thumb: Blob | undefined;
+    if (image) {
+      const size = outputSize(last.geometry, last.width, last.height);
+      const k = Math.min(1, 960 / Math.max(size.width, size.height));
+      const target = makeCanvas(Math.max(1, Math.round(size.width * k)), Math.max(1, Math.round(size.height * k)));
+      drawGeometry(target.getContext('2d')!, image, last, 0, 0, k, 'output');
+      const bitmap = await createImageBitmap(target);
+      thumb = await thumbnail(bitmap).catch(() => undefined).finally(() => bitmap.close());
+    }
+    onUpdate({ ...projectRef.current, ...(thumb ? { thumbnail: thumb } : {}), edits: savedEdits(last), edited: Date.now() });
+    setSavedDoc(last);
+  }, [savePixels, onUpdate, setSavedDoc]);
+  const save = useCallback(() => { void saveToLibrary().then(() => onToast(t('保存しました。'))); }, [saveToLibrary, onToast]);
+  /** Going back asks first when there are unsaved changes. */
+  const requestClose = useCallback(() => { if (dirty) setClosing(true); else onClose(); }, [dirty, onClose]);
+
   const commands = useMemo((): Command[] => {
     if (!history || !palette) return [];
     const d = history.present;
@@ -1173,30 +1227,29 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       { id: 'export', group: t('ファイル'), label: t('書き出し'), reading: 'カキダシ', keywords: ['export', 'save', 'ホゾン', 'PNG', 'JPEG', 'WebP', 'ダウンロード'], icon: Download, shortcut: `${mod}+⇧+E`, run: () => setExporting(true) },
       { id: 'save-psd', group: t('ファイル'), label: t('PSD として保存'), reading: 'ピーエスディートシテホゾン', keywords: ['psd', 'photoshop', 'フォトショップ'], icon: FileDown, run: () => void saveProject('psd') },
       { id: 'save-imagee', group: t('ファイル'), label: t('.imagee として保存'), reading: 'イメージートシテホゾン', keywords: ['project', 'プロジェクト'], icon: FileDown, run: () => void saveProject('imagee') },
-      { id: 'library', group: t('ファイル'), label: t('ライブラリに戻る'), reading: 'ライブラリニモドル', keywords: ['back', 'close', 'トジル'], icon: ArrowLeft, run: onClose },
+      { id: 'library', group: t('ファイル'), label: t('ライブラリに戻る'), reading: 'ライブラリニモドル', keywords: ['back', 'close', 'トジル'], icon: ArrowLeft, run: requestClose },
+      { id: 'save', group: t('ファイル'), label: t('保存'), reading: 'ホゾン', keywords: ['save', 'ホゾン'], icon: Save, shortcut: `${mod}+S`, run: save },
       { id: 'settings', group: t('ファイル'), label: t('設定'), reading: 'セッテイ', keywords: ['settings', 'preferences', 'テーマ', 'ダークモード'], icon: Settings, run: onSettings },
       { id: 'help', group: t('ヘルプ'), label: t('ヘルプとショートカット'), keywords: ['help', 'ツカイカタ', 'ショートカット', 'キー'], icon: CircleHelp, shortcut: '?', run: () => setHelp(true) },
     ];
     for (const tool of TOOLS) list.push({ id: `tool-${tool.id}`, group: t('ツール'), label: tool.label.replace(/\s*[（(].*[）)]/, ''), ...TOOL_SEARCH[tool.id], icon: tool.icon, shortcut: tool.key, run: () => setTool(tool.id) });
     return list;
-  }, [palette, history, selection, view, colors, change, apply, setTool, setTab, auto, setAdjustState, aiSubject, aiSky, aiRemoveBackground, aiFillSelection, aiUpscale, selectionCommand, refine, copy, fillSelection, pasteInternal, layerActions, zoomTo, fit, saveProject, onClose, onSettings, onToast]);
+  }, [palette, history, selection, view, colors, change, apply, setTool, setTab, auto, setAdjustState, aiSubject, aiSky, aiRemoveBackground, aiFillSelection, aiUpscale, selectionCommand, refine, copy, fillSelection, pasteInternal, layerActions, zoomTo, fit, saveProject, requestClose, save, onSettings, onToast]);
 
-  // Save a thumbnail of the edited result and any unsaved pixels when leaving the editor.
-  // Rendered once when the sheet opens (at full size, which can take a moment for large images).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const exportImage = useMemo(() => exporting && version ? fullImage() : null, [exporting, version, fullImage]);
-  const latest = useRef<{ doc?: Doc; image?: HTMLCanvasElement }>({});
-  latest.current = { doc, image: version ? adjuster.canvas : undefined };
+  // Keep this image's history for the rest of the session, saved or not.
   useEffect(() => () => {
-    savePixels();
-    const { doc: last, image } = latest.current;
-    if (!last || !image) return;
-    const size = outputSize(last.geometry, last.width, last.height);
-    const k = Math.min(1, 960 / Math.max(size.width, size.height));
-    const target = makeCanvas(Math.max(1, Math.round(size.width * k)), Math.max(1, Math.round(size.height * k)));
-    drawGeometry(target.getContext('2d')!, image, last, 0, 0, k, 'output');
-    void createImageBitmap(target).then(bitmap => thumbnail(bitmap).finally(() => bitmap.close())).then(blob => onUpdate({ ...projectRef.current, thumbnail: blob, edits: savedEdits(last), edited: Date.now() })).catch(() => {});
-  }, [adjuster, onUpdate, savePixels]);
+    const history = historyRef.current, saved = savedRef.current;
+    if (!history || !saved) return;
+    sessions.delete(project.id);
+    sessions.set(project.id, { history, store, saved });
+    for (const id of sessions.keys()) if (sessions.size > SESSIONS) sessions.delete(id);
+  }, [store]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    if (platform === 'web') addEventListener('beforeunload', warn);
+    return () => removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
@@ -1229,6 +1282,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
       else if (command && key === '0') { event.preventDefault(); fit(); }
       else if (command && key === '1') { event.preventDefault(); zoomTo(1); }
       else if (command && event.shiftKey && key === 'e') { event.preventDefault(); setExporting(true); }
+      else if (command && !event.shiftKey && key === 's') { event.preventDefault(); save(); }
       else if (command && event.shiftKey && key === 'i') { event.preventDefault(); selectionCommand('invert'); }
       else if (command && key === 'a') { event.preventDefault(); selectionCommand('all'); }
       else if (command && key === 'd') { event.preventDefault(); selectionCommand('none'); }
@@ -1272,7 +1326,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
     const up = (event: KeyboardEvent) => { if (event.key.startsWith('Arrow')) endGesture(); if (event.key === ' ') setSpace(false); if (event.key === '\\') setBefore(false); if (event.key === 'Shift' || event.key === 'Alt') bumpOverlay(); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast, aiFillSelection, endGesture]);
+  }, [view, zoomTo, fit, tool, setTool, apply, selectionCommand, copy, pasteInternal, fillSelection, layerActions, colors, settings, setSettings, updateLayer, onToast, aiFillSelection, endGesture, save]);
   if (error) return <div className="app editor"><div className="editor-error"><h2>{t('画像を開けませんでした')}</h2><p>{error}</p><button type="button" className="btn" onClick={onClose}><ArrowLeft size={16}/>{t('ライブラリに戻る')}</button></div></div>;
   if (!doc || !history || !output || !selected) return <div className="app editor"><div className="editor-loading"><span className="spinner" aria-hidden="true"/>{t('読み込み中…')}</div></div>;
 
@@ -1280,7 +1334,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
   return <div className="app editor" data-tool={tool}>
     <header className="editor-bar">
       <div className="bar-group">
-        <IconButton icon={ArrowLeft} label={t('ライブラリに戻る')} onClick={onClose}/>
+        <IconButton icon={ArrowLeft} label={t('ライブラリに戻る')} onClick={requestClose}/>
         <div className="doc-title"><strong>{project.name}</strong><span className="num">{output.width} × {output.height}</span></div>
       </div>
       <div className="bar-group">
@@ -1300,6 +1354,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         <button type="button" className="btn search-btn" title={t('機能を検索 ({0}+K)', mod)} onClick={() => setPalette(true)}><Search size={15} aria-hidden="true"/><span className="btn-label">{t('機能を検索')}</span><kbd className="kbd">{mod}+K</kbd></button>
         <IconButton icon={CircleHelp} label={t('ヘルプ')} shortcut="?" className="help-btn" onClick={() => setHelp(true)}/>
         <IconButton icon={Settings} label={t('設定')} className="settings-btn" onClick={onSettings}/>
+        <button type="button" className="btn save-btn" title={t('ライブラリに保存 ({0}+S)', mod)} disabled={!dirty} onClick={save}><Save size={15} aria-hidden="true"/><span className="btn-label">{dirty ? t('保存') : t('保存済み')}</span></button>
         <button type="button" className="btn primary" title={t('書き出し ({0}+⇧+E)', mod)} onClick={() => setExporting(true)}><Download size={16} aria-hidden="true"/>{t('書き出し')}</button>
       </div>
     </header>
@@ -1347,6 +1402,14 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         </div>
       </aside>
     </div>
+    {closing && <Modal title={t('変更を保存しますか？')} onClose={() => setClosing(false)}>
+      <p className="modal-text">{t('「{0}」の変更は保存されていません。保存しなくても、アプリを閉じるまでは開き直して「やり直す」で戻せます。', project.name)}</p>
+      <div className="modal-actions">
+        <button type="button" className="btn" onClick={() => setClosing(false)}>{t('キャンセル')}</button>
+        <button type="button" className="btn" onClick={onClose}>{t('保存しない')}</button>
+        <button type="button" className="btn primary" autoFocus onClick={() => void saveToLibrary().then(onClose)}>{t('保存')}</button>
+      </div>
+    </Modal>}
     {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)}/>}
     {help && <HelpSheet onClose={() => setHelp(false)} onSearch={() => { setHelp(false); setPalette(true); }}/>}
     {resizing && <ResizeSheet initial={resizing} width={doc.width} height={doc.height} background={colors[1]} onApply={resizeDoc} onClose={() => setResizing(null)}/>}
@@ -1358,6 +1421,14 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
 
 /** Sets a layer's mask surface to `source` (or all white). An existing surface is edited rather than replaced,
  *  so undo can still reach its earlier revisions. */
+/** A raster layer that is opaque over the whole canvas, like a background. */
+function coversCanvas(layer: RasterLayer, d: Doc, store: PixelStore): boolean {
+  const surface = store.get(layer.id);
+  if (!surface || layer.x !== 0 || layer.y !== 0 || surface.width < d.width || surface.height < d.height) return false;
+  const c = surface.getContext('2d')!, w = d.width - 1, h = d.height - 1;
+  return [[0, 0], [w, 0], [0, h], [w, h], [w >> 1, h >> 1]].every(([x, y]) => c.getImageData(x, y, 1, 1).data[3] === 255);
+}
+
 function replaceMask(store: PixelStore, key: string, width: number, height: number, source?: CanvasImageSource): number | null {
   if (!store.has(key)) return createMask(store, key, width, height, source);
   return editSurface(store, key, { x: 0, y: 0, w: width, h: height }, c => {

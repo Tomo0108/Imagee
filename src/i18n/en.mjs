@@ -673,4 +673,13 @@ export default /** @type {Record<string, string>} */ ({
   "ドラッグして並び替え（↑↓キーでも移動）": "Drag to reorder (or use ↑↓ keys)",
   "クリックした画像・文字・図形を選んでドラッグで移動します。Shift+ドラッグで選択中のレイヤーを、矢印キーで 1px ずつ動かせます。": "Click an image, text or shape to select and drag it. Shift-drag moves the current layer; arrow keys nudge 1px.",
   "説明": "About this",
+  "配置する画像レイヤーが2枚以上必要です": "Arranging needs at least two image layers",
+  "保存しました。": "Saved.",
+  "ライブラリに保存 ({0}+S)": "Save to library ({0}+S)",
+  "保存済み": "Saved",
+  "変更を保存しますか？": "Save your changes?",
+  "「{0}」の変更は保存されていません。保存しなくても、アプリを閉じるまでは開き直して「やり直す」で戻せます。": "Your changes to “{0}” are not saved yet. If you don’t save them, you can still bring them back with Redo when you open it again, until the app closes.",
+  "保存しない": "Don’t save",
+  "選んだ画像をキャンバスに並べます": "Lay out the chosen images on the canvas",
+  "画像レイヤーをすべてキャンバスに並べます（背景は除きます）": "Lay out all image layers on the canvas (except the background)",
 });

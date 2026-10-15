@@ -17,6 +17,12 @@ try {
   await page.addInitScript(() => { window.showOpenFilePicker = undefined; });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  /** Back to the library, saving any changes when asked. */
+  const back = async () => {
+    await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+    const ask = page.getByRole('dialog', { name: '変更を保存しますか？' });
+    if (await ask.waitFor({ timeout: 1000 }).then(() => true, () => false)) await ask.getByRole('button', { name: '保存', exact: true }).click();
+  };
   await page.goto(url);
   // The first run opens on the start screen with the guided tour.
   await page.locator('.tour-card').waitFor();
@@ -85,11 +91,11 @@ try {
   const zoom = await page.locator('.zoom-readout').textContent();
   assert.notEqual(zoom, '100%', 'large image should open fitted to the window');
   // A tool's hint shows above the canvas the first time only; afterwards it lives in the help.
-  assert.match(await page.locator('.first-hint').textContent(), /表示位置を移動/);
+  assert.match(await page.locator('.first-hint').textContent(), /クリックした画像・文字・図形を選んで/);
   await page.screenshot({ path: `${out}/editor-dark.png` });
   await page.keyboard.press('b');
   assert.match(await page.locator('.first-hint').textContent(), /描画色を塗ります/);
-  await page.keyboard.press('h');
+  await page.keyboard.press('v');
   assert.equal(await page.locator('.first-hint').count(), 0, 'hint is not shown again');
   await page.keyboard.press('Control+1');
   assert.equal(await page.locator('.zoom-readout').textContent(), '100%');
@@ -194,11 +200,33 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
 
+  // Edits are saved explicitly: going back with unsaved changes asks first.
   await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  const ask = page.getByRole('dialog', { name: '変更を保存しますか？' });
+  await ask.waitFor();
+  await page.screenshot({ path: `${out}/save-ask-dark.png` });
+  await ask.getByRole('button', { name: 'キャンセル' }).click();
+  await ask.waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.doc-title span').textContent(), dims, 'cancel stays in the editor');
+  // Not saving keeps the library as it was, but the edits come back with redo while the app is open.
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await ask.getByRole('button', { name: '保存しない' }).click();
+  await page.locator('.project').first().waitFor();
+  await page.getByRole('button', { name: '夕焼け.pngを開く' }).click();
+  await page.locator('.stage canvas').waitFor();
+  assert.equal(await page.locator('.doc-title span').textContent(), '1600 × 1000', 'unsaved edits are not kept');
+  const redoButton = page.getByRole('button', { name: 'やり直す' });
+  assert.ok(await redoButton.isEnabled(), 'unsaved edits can be redone');
+  while (await redoButton.isEnabled() && await page.locator('.doc-title span').textContent() !== dims) await redoButton.click();
+  assert.equal(await page.locator('.doc-title span').textContent(), dims, 'redo brings the edits back');
+  await page.keyboard.press('Control+s');
+  await page.getByRole('button', { name: '保存済み' }).waitFor();
+  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  assert.equal(await ask.count(), 0, 'nothing to ask after saving');
   await page.waitForTimeout(800);
   await page.getByRole('button', { name: '夕焼け.pngを開く' }).click();
   assert.equal(await page.locator('.doc-title span').textContent(), dims, 'edits are restored when reopening');
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
 
   // Painting, selections, layers, masks, text and shapes on the square image; all of it survives reopening.
   await page.getByRole('button', { name: 'square.pngを開く' }).click();
@@ -264,7 +292,7 @@ try {
   for (const label of ['ブラシ', '新規レイヤー', '描画色で塗りつぶし', 'テキストを追加', 'テキストを編集', '図形を追加', 'マスクを追加', 'マスクを編集']) assert.ok(labels.includes(label), `history has ${label}: ${labels}`);
 
   const painted = [await pixel(cx - 100, cy - 150), await pixel(cx - 45, cy + 70), await pixel(cx, cy + 30)];
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
   await page.waitForTimeout(1500);
   await page.getByRole('button', { name: 'square.pngを開く' }).click();
   await page.locator('.stage canvas').waitFor();
@@ -363,7 +391,7 @@ try {
     const reader = new FileReader(); reader.onload = () => resolve([name, reader.result.split(',')[1]]); reader.readAsDataURL(blob);
   }))));
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
   await page.waitForTimeout(500);
   const projectChooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: '画像を開く' }).first().click();
@@ -375,14 +403,14 @@ try {
   await page.waitForTimeout(500);
   assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', 'レイヤー 1', '背景'], 'PSD layers are imported');
   assert.ok(isBlue(await pixel(cx - 45, cy + 70)), 'PSD layer pixels are imported');
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
   await page.waitForTimeout(300);
   await page.getByRole('button', { name: 'square.pngを開く' }).first().click();
   await page.locator('.stage canvas').waitFor();
   await page.waitForTimeout(500);
   assert.deepEqual(await layerNames(), ['図形 1', 'テキスト 1', '調整レイヤー 1', 'レイヤー 1', '背景'], '.imagee keeps every layer');
   assert.ok(stamped(await pixel(cx + 104, cy + 250)), '.imagee keeps painted pixels');
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
 
   // Batch: crop two images to 1:1, fit the long side to 400 px, add a watermark and save them as one zip.
   await page.waitForTimeout(300);
@@ -478,7 +506,7 @@ try {
   await page.getByRole('button', { name: '2倍' }).click();
   await page.locator('.doc-title', { hasText: 'scene ×2.png' }).waitFor({ timeout: 300000 });
   assert.match(await page.locator('.doc-title').innerText(), /800 × 600/);
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
   await page.waitForTimeout(300);
   await page.evaluate(() => localStorage.setItem('imagee-preferences', JSON.stringify({ theme: 'light', checkerboard: 'light' })));
   await page.reload();
@@ -539,7 +567,7 @@ try {
   await page.waitForTimeout(300);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${out}/library-mobile-light.png` });
   await page.getByRole('button', { name: 'portrait.pngを開く' }).click();
@@ -550,7 +578,7 @@ try {
 
   // English: the language setting translates the whole interface after a reload.
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
+  await back();
   await page.locator('.settings-btn').first().click();
   // Explanations live behind ? buttons.
   await page.locator('.help-tip-btn').first().hover();

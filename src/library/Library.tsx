@@ -55,10 +55,9 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
     <Ambient/>
     <div className="titlebar"/>
     <aside className="sidebar">
-      <div className="brand"><img className="brand-icon" src={`${import.meta.env.BASE_URL}icons/icon-192.png`} width="36" height="36" alt=""/><div className="brand-text"><div className="brand-name" translate="no">Imagee</div><div className="brand-sub">{t('画像エディタ')}</div></div><IconButton icon={Settings} label={t('設定')} className="settings-btn" onClick={onSettings}/></div>
+      <div className="brand"><img className="brand-icon" src={`${import.meta.env.BASE_URL}icons/icon-192.png`} width="36" height="36" alt=""/><div className="brand-text"><div className="brand-name" translate="no">Imagee</div></div><IconButton icon={Settings} label={t('設定')} className="settings-btn" onClick={onSettings}/></div>
       <nav className="nav" aria-label={t('ライブラリ')}>
         <button type="button" className="nav-item" onClick={onHome}><span className="nav-icon"><House size={17} strokeWidth={1.9} aria-hidden="true"/></span><span className="nav-text">{t('ホーム')}</span></button>
-        <div className="nav-label">{t('ライブラリ')}</div>
         {FILTERS.map(({ id, label, icon: Icon }) => <button key={id} type="button" className={`nav-item${filter === id ? ' active' : ''}`} aria-current={filter === id ? 'page' : undefined} onClick={() => setFilter(id)}>
           <span className="nav-icon"><Icon size={17} strokeWidth={1.9} aria-hidden="true"/></span><span className="nav-text">{label}</span><span className="badge">{counts[id]}</span>
         </button>)}

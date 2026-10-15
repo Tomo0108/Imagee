@@ -5,6 +5,7 @@ import { registerPwa } from './platform';
 import { lang } from './i18n/index.mjs';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/noto-sans-jp';
+import '@fontsource-variable/outfit';
 import './styles.css';
 document.documentElement.lang = lang;
 registerPwa();

@@ -87,7 +87,6 @@ export function Home({ projects, reel, onImport, onOpen, onLibrary, onSettings, 
     <div className="bg-fx" aria-hidden="true"><div className="ambient"><i className="f1"/><i className="f2"/><i className="f3"/></div></div>
     <div className="titlebar"/>
     <header className="home-bar">
-      <div className="home-brand"><img src={`${import.meta.env.BASE_URL}icons/icon-192.png`} width="32" height="32" alt=""/><span translate="no">Imagee</span></div>
       <div className="home-bar-actions">
         <button type="button" className="btn ghost" data-tour="home-library" onClick={onLibrary}><Images size={16} aria-hidden="true"/>{t('ライブラリ')}</button>
         <IconButton icon={CircleHelp} label={t('チュートリアル')} onClick={onTutorial}/>
@@ -96,7 +95,10 @@ export function Home({ projects, reel, onImport, onOpen, onLibrary, onSettings, 
     </header>
     <main className="home-main">
       <section className="home-hero">
-        <div className="home-mark" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}icons/icon-512.png`} width="112" height="112" alt=""/></div>
+        <div className="home-logo" translate="no" role="img" aria-label="Imagee">
+          <span className="home-mark" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}icons/icon-512.png`} width="112" height="112" alt=""/></span>
+          <span className="home-wordmark">Imagee</span>
+        </div>
         <div className="home-cta" data-tour="home-open">
           <button type="button" className="btn primary lg" onClick={open}><ImagePlus size={18} aria-hidden="true"/>{t('画像を開く')}</button>
           <button type="button" className="btn lg" onClick={onLibrary}><Images size={18} aria-hidden="true"/>{t('ライブラリを見る')}<ArrowRight size={16} aria-hidden="true"/></button>

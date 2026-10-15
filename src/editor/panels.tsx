@@ -147,7 +147,7 @@ export function LayersPanel({ doc, store, cache, selected, target, onTarget, act
       <IconButton icon={ArrowDown} label={t('下へ')} size={16} disabled={index === 0} onClick={() => actions.move(-1)}/>
       <IconButton icon={Trash2} label={t('レイヤーを削除')} size={16} disabled={doc.layers.length < 2} onClick={actions.remove}/>
     </div>
-    <button type="button" className="btn wide" disabled={selectedIds.length < 2} onClick={actions.arrange}><Wand2 size={15} aria-hidden="true"/>{t('自動配置')}{selectedIds.length > 1 ? `（${selectedIds.length}）` : ''}</button>
+    <button type="button" className="btn wide" disabled={doc.layers.filter(layer => layer.kind === 'raster' && layer.visible).length < 2} title={selectedIds.length > 1 ? t('選んだ画像をキャンバスに並べます') : t('画像レイヤーをすべてキャンバスに並べます（背景は除きます）')} onClick={actions.arrange}><Wand2 size={15} aria-hidden="true"/>{t('自動配置')}{selectedIds.length > 1 ? `（${selectedIds.length}）` : ''}</button>
     <ul className={`layer-list${drag ? ' dragging' : ''}`} aria-label={t('レイヤー')} ref={list}>
       {[...doc.layers].reverse().map((layer, i) => <li key={layer.id} className={`${selectedIds.includes(layer.id) ? 'selected' : ''}${drag?.id === layer.id ? ' lifted' : ''}`}
         style={drag ? { transform: `translateY(${drag.id === layer.id ? drag.dy : shift(i)}px)` } : undefined}>
