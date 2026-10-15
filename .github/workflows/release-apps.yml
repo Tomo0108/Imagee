@@ -1,12 +1,17 @@
 name: Release apps
 on:
   workflow_dispatch:
+    inputs:
+      test_build:
+        description: 'Test build only: build the apps as downloadable artifacts and do not publish a release'
+        type: boolean
+        default: false
   push:
     tags: ['v*']
 permissions:
   contents: write
 concurrency:
-  group: release-apps
+  group: release-apps-${{ inputs.test_build && 'test' || 'release' }}
   cancel-in-progress: true
 jobs:
   macos:
@@ -63,6 +68,8 @@ jobs:
           if-no-files-found: error
   release:
     needs: [macos, windows]
+    # A test build stops here: its apps are on the run page as the "macos" and "windows" artifacts.
+    if: ${{ !inputs.test_build }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
