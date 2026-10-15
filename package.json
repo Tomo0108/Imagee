@@ -98,7 +98,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Imagee-win-setup.${ext}"
+      "artifactName": "Imagee-win-setup.${ext}",
+      "include": "build/installer.nsh"
     }
   },
   "dependencies": {
