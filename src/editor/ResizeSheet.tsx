@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import { Modal, Segmented, Toggle } from '../ui';
 import { findPreset, matchPreset, oriented, SIZE_PRESETS } from '../lib/sizes.mjs';
 import { t } from '../i18n/index.mjs';
+import { Select } from '../Select';
 
 /** Quick picks shown as chips; every preset is in the list next to them. */
 const QUICK = ['4k', 'fhd', 'hd', 'iphone', 'square', 'story', 'a4', 'ogp'];
@@ -55,10 +56,10 @@ export function ResizeSheet({ initial, width: w0, height: h0, background, onAppl
           </button>; })}
         </div>
         <div className="size-preset-row">
-          <label className="select"><span>{t('プリセット')}</span><select value={preset?.id ?? ''} onChange={e => e.target.value && choose(e.target.value)}>
+          <label className="select"><span>{t('プリセット')}</span><Select value={preset?.id ?? ''} onChange={e => e.target.value && choose(e.target.value)}>
             <option value="">{t('カスタム')}</option>
             {SIZE_PRESETS.map(group => <optgroup key={group.group} label={group.group}>{group.items.map(item => <option key={item.id} value={item.id}>{t('{0}（{1} × {2}）', item.label, item.width, item.height)}</option>)}</optgroup>)}
-          </select></label>
+          </Select></label>
           <Segmented label={t('向き')} value={orientation} onChange={turn => preset ? choose(preset.id, turn) : setSize({ width: size.height, height: size.width })} options={[{ value: 'portrait', label: t('縦') }, { value: 'landscape', label: t('横') }]}/>
         </div>
       </div>

@@ -37,34 +37,40 @@
   --switch-off: rgba(120, 120, 128, 0.32);
 }
 html[data-theme="light"] {
+  /* Light: white panels floating on a soft cool-grey desk, ink-dark text in three solid steps, and a
+     darker neutral around the canvas so images stand out. Shadows carry a hint of the violet ink. */
   color-scheme: light;
-  --a1: #5b36e8;
-  --a1-fill: #6a46f5;
-  --window: #e9e9ee;
-  --main: #f3f3f6;
-  --stage: #dcdce3;
-  --label: #111114;
-  --label-2: rgba(40, 40, 48, 0.84);
-  --label-3: rgba(40, 40, 48, 0.62);
-  --sep: rgba(40, 40, 52, 0.16);
-  --fill: rgba(100, 100, 112, 0.2);
-  --fill-2: rgba(100, 100, 112, 0.12);
-  --hover: rgba(0, 0, 0, 0.06);
-  --glass: rgba(255, 255, 255, 0.84);
-  --glass-thick: rgba(255, 255, 255, 0.96);
-  --glass-edge: rgba(0, 0, 0, 0.1);
-  --glass-spec: rgba(255, 255, 255, 0.95);
+  --a1: #5b3fe0;
+  --a1-fill: #6448f0;
+  --window: #f3f3f7;
+  --main: #f3f3f7;
+  --stage: #e6e6ee;
+  --label: #17171c;
+  --label-2: #4f4f5c;
+  --label-3: #858593;
+  --sep: rgba(23, 23, 48, 0.09);
+  --fill: rgba(23, 23, 48, 0.075);
+  --fill-2: rgba(23, 23, 48, 0.045);
+  --hover: rgba(23, 23, 48, 0.05);
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-thick: rgba(255, 255, 255, 0.97);
+  --glass-edge: rgba(23, 23, 48, 0.08);
+  --glass-spec: rgba(255, 255, 255, 1);
   --surface: #ffffff;
-  --surface-edge: rgba(0, 0, 0, 0.11);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow-2: 0 10px 30px -10px rgba(0, 0, 0, 0.2);
-  --shadow-pop: 0 20px 50px -12px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.14);
-  --ambient-opacity: 0.16;
-  --ok: #1e8e3e;
+  --surface-edge: rgba(23, 23, 48, 0.09);
+  --shadow-1: 0 1px 2px rgba(23, 23, 48, 0.06);
+  --shadow-2: 0 12px 32px -14px rgba(30, 24, 80, 0.22);
+  --shadow-pop: 0 24px 56px -16px rgba(30, 24, 80, 0.3), 0 0 0 0.5px rgba(23, 23, 48, 0.1);
+  --ambient-opacity: 0.09;
+  --ok: #1a7f37;
   --warn: #b45309;
-  --danger: #d1281e;
-  --switch-off: rgba(100, 100, 112, 0.3);
+  --danger: #cf222e;
+  --switch-off: rgba(23, 23, 48, 0.18);
 }
+html[data-theme="light"] .nav-item.active { background: color-mix(in srgb, var(--a1) 10%, #fff); color: var(--a1); }
+html[data-theme="light"] .layer-list li.selected { background: color-mix(in srgb, var(--a1) 10%, #fff); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--a1) 22%, transparent); }
+html[data-theme="light"] .stage-wrap { box-shadow: inset 0 0 0 0.5px var(--sep), inset 0 2px 8px rgba(23, 23, 48, 0.05); }
+html[data-theme="light"] .btn.primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 6px 14px -8px color-mix(in srgb, var(--a1) 60%, transparent); }
 html[data-theme="light"] button:disabled { opacity: .45; }
 /* Accent colours (設定 › 配色). Violet is the default above; each pairs a dark-mode and a light-mode tone. */
 html[data-accent="blue"] { --a1: #64a8ff; --a1-fill: #0a84ff; }
@@ -178,8 +184,37 @@ html[data-theme="dark"] .segmented button.on { background: rgba(255, 255, 255, 0
 .search-clear { display: grid; place-items: center; color: var(--label-3); padding: 2px; border-radius: 50%; }
 
 .select { display: inline-flex; align-items: center; gap: 8px; color: var(--label-2); font-size: var(--type-caption); }
-select, .field select { height: 28px; padding: 0 26px 0 10px; border-radius: 8px; border: 0; background: var(--fill-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23999' stroke-width='1.6'%3E%3Cpath d='m1 1 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 9px center; color: var(--label); font-size: var(--type-callout); appearance: none; box-shadow: inset 0 0 0 0.5px var(--surface-edge); cursor: pointer; }
-select option { background: var(--window); color: var(--label); }
+/* Drop-down lists (Select.tsx): a pill-shaped button, and a floating list that unfolds from it. */
+.select-trigger { display: inline-flex; align-items: center; gap: 8px; height: 28px; min-width: 0; max-width: 100%; padding: 0 8px 0 10px; border: 0; border-radius: 8px;
+  background: var(--fill-2); color: var(--label); font-size: var(--type-callout); text-align: left; cursor: pointer; box-shadow: inset 0 0 0 0.5px var(--surface-edge);
+  transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
+.select-trigger:hover:not(:disabled) { background: var(--fill); }
+.select-trigger:focus-visible { outline: 0; box-shadow: inset 0 0 0 0.5px var(--surface-edge), 0 0 0 3px color-mix(in srgb, var(--a1) 35%, transparent); }
+.select-trigger[aria-expanded="true"] { background: var(--fill); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--a1) 55%, transparent); }
+.select-trigger:disabled { opacity: .45; cursor: default; }
+.select-value { flex: 1; min-width: 0; display: grid; overflow: hidden; }
+.select-value > span { grid-area: 1 / 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.select-sizer { visibility: hidden; height: 0; }
+.select-chevron { flex: none; color: var(--label-3); transition: rotate .28s var(--ease-spring), color var(--t-fast); }
+.select-trigger[aria-expanded="true"] .select-chevron { rotate: 180deg; color: var(--a1); }
+.select-list { position: fixed; inset: auto; margin: 0; z-index: 1000; box-sizing: border-box; overflow: auto; overscroll-behavior: contain; padding: 5px; border-radius: 12px;
+  border: 0.5px solid var(--glass-edge); background: var(--glass-thick); color: var(--label); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: inset 0 1px 0 var(--glass-spec), var(--shadow-pop); font-size: var(--type-callout); transform-origin: top center; animation: select-in .26s var(--ease-spring) both; }
+.select-list[data-up] { transform: translateY(-100%); transform-origin: bottom center; }
+.select-list[data-leaving] { animation: select-out .14s var(--ease-out) both; }
+.select-group { padding: 8px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--label-3); }
+.select-row:not(:first-child) > .select-group { margin-top: 4px; border-top: 0.5px solid var(--sep); padding-top: 10px; }
+.select-option { position: relative; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 12px 5px 8px; border-radius: 7px; white-space: nowrap; cursor: pointer;
+  animation: select-row .3s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 12ms); transition: background .12s var(--ease), color .12s var(--ease); }
+.select-option.active { background: color-mix(in srgb, var(--a1) 14%, transparent); }
+.select-option.selected { color: var(--a1); font-weight: 600; }
+.select-option[aria-disabled] { opacity: .4; cursor: default; }
+.select-check { flex: none; opacity: 0; scale: .5; transition: opacity .18s var(--ease), scale .28s var(--ease-spring); }
+.select-option.selected .select-check { opacity: 1; scale: 1; }
+@keyframes select-in { from { opacity: 0; scale: .96 .9; translate: 0 -6px; } }
+@keyframes select-out { to { opacity: 0; scale: .98 .96; translate: 0 -4px; } }
+@keyframes select-row { from { opacity: 0; translate: 0 -3px; } }
+html[data-motion="off"] .select-list, html[data-motion="off"] .select-option { animation: none; }
 .text-input { width: 100%; height: 36px; padding: 0 12px; border-radius: 10px; border: 0; outline: 0; background: var(--fill-2); color: var(--label); box-shadow: inset 0 0 0 0.5px var(--surface-edge); user-select: text; }
 .text-input:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--a1) 40%, transparent); }
 
@@ -391,10 +426,10 @@ html[data-platform="mac"] .sidebar { padding-top: 40px; }
 .batch-recipe { display: grid; gap: 12px; align-content: start; max-height: min(460px, 56dvh); overflow: auto; padding-right: 2px; }
 .batch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--type-callout); min-width: 0; }
 .batch-row > span { flex: none; color: var(--label-2); }
-.batch-row > .text-input, .batch-row > select { flex: 1; min-width: 0; max-width: 260px; height: 32px; }
+.batch-row > .text-input, .batch-row > .select-trigger { flex: 1; min-width: 0; max-width: 260px; height: 32px; }
 .batch-recipes { justify-content: flex-start; gap: 8px; padding-bottom: 12px; border-bottom: 0.5px solid var(--sep); }
 .batch-recipes .text-input { flex: 1; height: 32px; min-width: 0; }
-.batch-recipes select { flex: 0 1 120px; min-width: 0; height: 32px; }
+.batch-recipes .select-trigger { flex: 0 1 120px; min-width: 0; height: 32px; }
 .batch-inline { display: flex; align-items: center; gap: 8px; }
 .batch-inline .text-input { width: 96px; height: 32px; }
 .batch-inline .unit { color: var(--label-3); font-size: var(--type-caption); }
@@ -781,7 +816,7 @@ html[data-theme="light"] .histogram .h-b { fill: rgba(10, 132, 255, .35); }
 .size-shape { display: block; height: 22px; max-width: 34px; margin-bottom: 2px; border-radius: 3px; border: 1.5px solid var(--label-3); transition: border-color var(--t-fast), scale .3s var(--ease-spring); }
 .size-chip.on .size-shape { border-color: var(--a1); background: color-mix(in srgb, var(--a1) 25%, transparent); scale: 1.08; }
 .size-preset-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.size-preset-row select { max-width: 260px; }
+.size-preset-row .select-trigger { max-width: 260px; }
 @media (max-width: 520px) { .size-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ---------- Start screen ---------- */
@@ -875,14 +910,14 @@ html[data-theme="light"] .home-starter-shape i { box-shadow: 0 6px 14px -8px rgb
 @keyframes tour-pulse { 50% { box-shadow: 0 0 0 2px var(--a1), 0 0 34px 8px color-mix(in srgb, var(--a1) 30%, transparent); } }
 .font-field { flex-direction: column; align-items: stretch; gap: 6px; }
 .font-field .field-row { display: flex; width: 100%; min-width: 0; }
-.font-field select { flex: 1; min-width: 0; width: 100%; text-overflow: ellipsis; }
+.font-field .select-trigger { flex: 1; min-width: 0; width: 100%; text-overflow: ellipsis; }
 .font-field .icon-btn { flex-shrink: 0; }
 .layer-select { flex-shrink: 0; accent-color: var(--a1); cursor: pointer; }
 
 .home-hero { padding: 20px 0 28px; }
 .home-cta { margin-top: 28px; }
 .home-preset-picker { min-width: 0; }
-.home-preset-picker select { max-width: 320px; min-width: 0; }
+.home-preset-picker .select-trigger { max-width: 320px; min-width: 0; }
 
 /* ---------- Layer reordering ---------- */
 .layer-grip { flex: none; display: grid; place-items: center; width: 18px; height: 32px; margin-left: 2px; border-radius: 6px; color: var(--label-3); cursor: grab; touch-action: none; opacity: .55; transition: opacity var(--t-fast), color var(--t-fast); }

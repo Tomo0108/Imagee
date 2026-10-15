@@ -6,6 +6,7 @@ import { canvas, toBlob } from './imaging';
 import { findPreset, SIZE_PRESETS } from './lib/sizes.mjs';
 import { IconButton, Segmented } from './ui';
 import { t } from './i18n/index.mjs';
+import { Select } from './Select';
 
 /** Blank canvases offered on the start screen; any other size is one click away in the size sheet. */
 const STARTERS = ['fhd', '4k', 'square', 'portrait-post', 'story', 'a4', 'a5', 'postcard', 'youtube-thumb', 'ogp', 'photo-3-2', 'icon'];
@@ -113,7 +114,7 @@ export function Home({ projects, reel, onImport, onOpen, onLibrary, onSettings, 
       </section>}
 
       <section className="home-section" data-tour="home-new" aria-label={t('新しいキャンバス')}>
-        <div className="home-section-head"><label className="select home-preset-picker"><FilePlus2 size={18} aria-hidden="true"/><select aria-label={t('キャンバスのプリセット')} value="" disabled={!!creating} onChange={e => e.target.value && void create(e.target.value)}><option value="">{t('すべてのサイズ')}</option>{SIZE_PRESETS.map(group => <optgroup key={group.group} label={group.group}>{group.items.map(preset => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>)}</select></label>
+        <div className="home-section-head"><label className="select home-preset-picker"><FilePlus2 size={18} aria-hidden="true"/><Select aria-label={t('キャンバスのプリセット')} value="" disabled={!!creating} onChange={e => e.target.value && void create(e.target.value)}><option value="">{t('すべてのサイズ')}</option>{SIZE_PRESETS.map(group => <optgroup key={group.group} label={group.group}>{group.items.map(preset => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>)}</Select></label>
           <Segmented label={t('背景')} value={background} onChange={setBackground} options={[{ value: 'white', label: t('白') }, { value: 'clear', label: t('透明') }]}/></div>
         <div className="home-starters">
           {STARTERS.map((id, index) => { const preset = findPreset(id)!; return <button key={id} type="button" className="home-starter" style={{ '--i': index } as React.CSSProperties} disabled={!!creating} onClick={() => void create(id)}>

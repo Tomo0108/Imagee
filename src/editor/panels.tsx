@@ -11,6 +11,7 @@ import { BLEND_MODES, FONTS, maskKey, type Doc, type Layer, type LayerCache, typ
 import type { PixelStore } from './pixels';
 import { IconButton, Kbd, Segmented, Slider, Toggle, mod } from '../ui';
 import { t, lang } from '../i18n/index.mjs';
+import { Select } from '../Select';
 
 const GROUPS = [['light', t('ライト')], ['color', t('カラー')], ['effects', t('効果')]] as const;
 interface AdjustProps {
@@ -179,7 +180,7 @@ export function LayersPanel({ doc, store, cache, selected, target, onTarget, act
     </ul>
     <div className="panel-section layer-props">
       <label className="field"><span>{t('描画モード')}</span>
-        <select value={selected.blend} onChange={e => actions.update(selected.id, { blend: e.target.value as Layer['blend'] }, t('描画モード'))}>{BLEND_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</select>
+        <Select value={selected.blend} onChange={e => actions.update(selected.id, { blend: e.target.value as Layer['blend'] }, t('描画モード'))}>{BLEND_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</Select>
       </label>
       <Slider label={t('不透明度')} value={selected.opacity} min={0} max={100} unit="%" onChange={opacity => actions.update(selected.id, { opacity }, t('不透明度'), true)} onCommit={actions.commit} onReset={() => actions.update(selected.id, { opacity: 100 }, t('不透明度'))}/>
       {selected.mask && <div className="field"><span>{t('マスクを使う')}</span><Toggle label={t('マスクを使う')} checked={selected.mask.enabled} onChange={enabled => actions.update(selected.id, { mask: { ...selected.mask!, enabled } }, enabled ? t('マスクを有効化') : t('マスクを無効化'))}/></div>}
@@ -211,11 +212,11 @@ function TextEditor({ text, autoFocus, onChange, onCommit }: { text: TextProps; 
     <textarea className="text-input" value={text.content} rows={3} autoFocus={autoFocus} aria-label={t('テキスト')} onFocus={e => autoFocus && e.target.select()}
       onChange={e => onChange({ content: e.target.value }, t('テキストを編集'), true)} onBlur={onCommit}/>
     <div className="field font-field"><span>{t('フォント')}</span><span className="field-row">
-      <select value={text.font} aria-label={t('フォント')} onChange={e => onChange({ font: e.target.value }, t('フォント'))}>
+      <Select value={text.font} aria-label={t('フォント')} onChange={e => onChange({ font: e.target.value }, t('フォント'))}>
         {FONTS.map(font => <option key={font.value} value={font.value}>{font.label}</option>)}
         {families && <optgroup label={t('この端末のフォント')}>{families.map(family => <option key={family} value={localFont(family)}>{family}</option>)}</optgroup>}
         {!known && <option value={text.font}>{text.font.split(',')[0].replace(/'/g, '')}</option>}
-      </select>
+      </Select>
       {canQueryFonts && !families && <IconButton icon={Type} label={t('この端末にインストールされたフォントを使う')} size={16} onClick={() => void loadLocalFonts().then(setFamilies, () => {})}/>}
     </span></div>
     <Slider label={t('サイズ')} value={text.size} min={6} max={600} unit="px" onChange={size => onChange({ size }, t('文字サイズ'), true)} onCommit={onCommit}/>

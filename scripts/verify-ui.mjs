@@ -17,6 +17,13 @@ try {
   await page.addInitScript(() => { window.showOpenFilePicker = undefined; });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  /** Picks an option from one of the app's drop-down lists. */
+  const choose = async (trigger, name) => {
+    await trigger.click();
+    const list = page.getByRole('listbox');
+    await list.getByRole('option', { name, exact: true }).click();
+    await list.waitFor({ state: 'detached' });
+  };
   /** Back to the library, saving any changes when asked. */
   const back = async () => {
     await page.getByRole('button', { name: 'ライブラリに戻る' }).click();
@@ -123,7 +130,7 @@ try {
   // Crop to a square and rotate a quarter turn: output becomes 1000 × 1000, then stays square.
   await page.getByRole('button', { name: '切り抜きと回転', exact: true }).click();
   await page.locator('.crop-bar').waitFor();
-  await page.locator('.crop-bar select').selectOption('1:1');
+  await choose(page.locator('.crop-bar .select-trigger'), '1:1');
   await page.getByRole('slider', { name: '角度' }).fill('4.5');
   await page.getByRole('slider', { name: '角度' }).dispatchEvent('pointerup');
   await page.waitForTimeout(200);
@@ -162,7 +169,7 @@ try {
   assert.equal(await page.getByRole('spinbutton', { name: '高さ' }).inputValue(), '2160');
   await page.getByRole('radio', { name: '縦' }).click();
   assert.equal(await page.getByRole('spinbutton', { name: '幅' }).inputValue(), '2160');
-  await page.locator('.size-presets select').selectOption('a4');
+  await choose(page.locator('.size-presets .select-trigger'), 'A4（2480 × 3508）');
   assert.equal(await page.getByRole('spinbutton', { name: '高さ' }).inputValue(), '3508');
   await page.screenshot({ path: `${out}/resize-presets-dark.png` });
   await page.keyboard.press('Escape');
@@ -418,10 +425,10 @@ try {
   await page.getByRole('button', { name: 'すべて解除' }).click();
   await page.getByRole('checkbox', { name: 'portrait.png' }).check();
   await page.getByRole('checkbox', { name: '夕焼け.png' }).check();
-  await page.getByLabel('縦横比').selectOption('1:1');
-  await page.getByLabel('サイズの基準').selectOption('long');
+  await choose(page.locator('label.batch-row', { hasText: '縦横比' }).locator('.select-trigger'), '1:1');
+  await choose(page.getByRole('combobox', { name: 'サイズの基準' }), '長辺');
   await page.getByLabel('サイズの値').fill('400');
-  await page.getByLabel('色調').selectOption({ label: 'ビビッド' });
+  await choose(page.locator('label.batch-row', { hasText: '色調' }).locator('.select-trigger'), 'ビビッド');
   await page.getByLabel('透かし', { exact: true }).fill('© Imagee');
   await page.getByRole('radio', { name: 'PNG' }).click();
   await page.getByLabel('ファイル名の末尾').fill('_web');

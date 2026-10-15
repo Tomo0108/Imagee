@@ -14,6 +14,7 @@ import { DEFAULT_RECIPE, normalizeRecipe, type Recipe } from '../lib/recipe.mjs'
 import { loadUserPresets } from '../editor/color-ui';
 import type { BatchProgress } from '../io/batch';
 import { t } from '../i18n/index.mjs';
+import { Select } from '../Select';
 
 const RECIPES = 'imagee-recipes';
 function loadRecipes(): Recipe[] { try { const v = JSON.parse(localStorage.getItem(RECIPES) || '[]'); return Array.isArray(v) ? v.map(normalizeRecipe) : []; } catch { return []; } }
@@ -104,37 +105,37 @@ export function BatchDialog({ projects, initial, onClose, onToast }: { projects:
       <section className="batch-recipe" aria-label={t('レシピ')}>
         <div className="batch-row batch-recipes">
           <input className="text-input" aria-label={t('レシピ名')} placeholder={t('レシピ名')} value={recipe.name} disabled={busy} onChange={e => set({ name: e.target.value })}/>
-          <select className="select-input" aria-label={t('保存したレシピ')} value={recipe.id && recipes.some(r => r.id === recipe.id) ? recipe.id : ''} disabled={busy} onChange={e => pickRecipe(e.target.value)}>
+          <Select className="select-input" aria-label={t('保存したレシピ')} value={recipe.id && recipes.some(r => r.id === recipe.id) ? recipe.id : ''} disabled={busy} onChange={e => pickRecipe(e.target.value)}>
             <option value="">{recipes.length ? t('呼び出す…') : t('保存済みなし')}</option>
             {recipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+          </Select>
           <button type="button" className="btn" disabled={busy} onClick={saveRecipe}><Save size={15} aria-hidden="true"/>{t('保存')}</button>
           {recipe.id && recipes.some(r => r.id === recipe.id) && <button type="button" className="btn icon-only" aria-label={t('レシピを削除')} title={t('レシピを削除')} disabled={busy} onClick={deleteRecipe}><Trash2 size={15} aria-hidden="true"/></button>}
         </div>
         <div className="batch-row"><span>{t('各画像の編集を反映')}</span><Toggle label={t('各画像の編集を反映')} checked={recipe.useEdits} onChange={useEdits => set({ useEdits })}/></div>
-        <label className="batch-row"><span>{t('色調')}</span><select className="select-input" value={tone} disabled={busy} onChange={e => chooseTone(e.target.value)}>
+        <label className="batch-row"><span>{t('色調')}</span><Select className="select-input" value={tone} disabled={busy} onChange={e => chooseTone(e.target.value)}>
           <option value="none">{recipe.useEdits ? t('各画像のまま') : t('補正しない')}</option>
           {tone === 'recipe' && <option value="recipe">{t('レシピの色調')}</option>}
           <optgroup label={t('プリセット')}>{PRESETS.map(p => <option key={p.id} value={`preset:${p.id}`}>{p.name}</option>)}</optgroup>
           {userPresets.length > 0 && <optgroup label={t('マイプリセット')}>{userPresets.map(p => <option key={p.id} value={`user:${p.id}`}>{p.name}</option>)}</optgroup>}
           {edited.length > 0 && <optgroup label={t('画像の補正をコピー')}>{edited.map(p => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}</optgroup>}
-        </select></label>
-        <label className="batch-row"><span>{t('縦横比')}</span><select className="select-input" value={recipe.aspect} disabled={busy} onChange={e => set({ aspect: e.target.value })}>
+        </Select></label>
+        <label className="batch-row"><span>{t('縦横比')}</span><Select className="select-input" value={recipe.aspect} disabled={busy} onChange={e => set({ aspect: e.target.value })}>
           {ASPECTS.map(a => <option key={a.id} value={a.id}>{a.id === 'free' ? t('変更しない') : a.label}</option>)}
-        </select></label>
+        </Select></label>
         <div className="batch-row"><span>{t('サイズ')}</span><div className="batch-inline">
-          <select className="select-input" aria-label={t('サイズの基準')} value={recipe.resize.mode} disabled={busy} onChange={e => set({ resize: { ...recipe.resize, mode: e.target.value as Recipe['resize']['mode'], value: e.target.value === 'percent' ? 50 : recipe.resize.mode === 'percent' ? 2048 : recipe.resize.value } })}>
+          <Select className="select-input" aria-label={t('サイズの基準')} value={recipe.resize.mode} disabled={busy} onChange={e => set({ resize: { ...recipe.resize, mode: e.target.value as Recipe['resize']['mode'], value: e.target.value === 'percent' ? 50 : recipe.resize.mode === 'percent' ? 2048 : recipe.resize.value } })}>
             {RESIZE.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
+          </Select>
           {recipe.resize.mode !== 'none' && <input className="text-input num" type="number" aria-label={t('サイズの値')} min={1} max={20000} value={recipe.resize.value} disabled={busy} onChange={e => set({ resize: { ...recipe.resize, value: Math.max(1, Number(e.target.value) || 1) } })}/>}
           {recipe.resize.mode !== 'none' && <span className="unit">{recipe.resize.mode === 'percent' ? '%' : 'px'}</span>}
         </div></div>
         <label className="batch-row"><span>{t('透かし')}</span><input className="text-input" placeholder={t('例: © 2026 ToMo（空欄で入れない）')} value={recipe.watermark.text} disabled={busy} onChange={e => set({ watermark: { ...recipe.watermark, text: e.target.value } })}/></label>
         {recipe.watermark.text.trim() && <div className="batch-sub">
           <div className="batch-row"><span>{t('位置')}</span><div className="batch-inline">
-            <select className="select-input" aria-label={t('透かしの位置')} value={recipe.watermark.position} disabled={busy} onChange={e => set({ watermark: { ...recipe.watermark, position: e.target.value as Recipe['watermark']['position'] } })}>
+            <Select className="select-input" aria-label={t('透かしの位置')} value={recipe.watermark.position} disabled={busy} onChange={e => set({ watermark: { ...recipe.watermark, position: e.target.value as Recipe['watermark']['position'] } })}>
               {POSITIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
+            </Select>
             <input type="color" className="color-input" aria-label={t('透かしの色')} value={recipe.watermark.color} disabled={busy} onChange={e => set({ watermark: { ...recipe.watermark, color: e.target.value } })}/>
           </div></div>
           <Slider label={t('透かしの大きさ')} value={recipe.watermark.size} min={1} max={30} unit="%" onChange={size => set({ watermark: { ...recipe.watermark, size } })}/>

@@ -7,6 +7,7 @@ import { pickImages } from '../platform';
 import { IconButton, Modal, Segmented, mod } from '../ui';
 import { BatchDialog } from './BatchDialog';
 import { t } from '../i18n/index.mjs';
+import { Select } from '../Select';
 
 type Filter = 'all' | 'recent' | 'favorites';
 const FILTERS: { id: Filter; label: string; icon: typeof Images }[] = [
@@ -79,7 +80,7 @@ export function Library({ projects, prefs, busy, onPrefs, onImport, onOpen, onUp
           </div>
         </header>
         {!empty && <div className="toolbar">
-          <label className="select"><span>{t('並べ替え')}</span><select value={prefs.sort} onChange={e => onPrefs({ ...prefs, sort: e.target.value as Preferences['sort'] })}><option value="recent">{t('最近')}</option><option value="name">{t('名前')}</option><option value="size">{t('ファイルサイズ')}</option></select></label>
+          <label className="select"><span>{t('並べ替え')}</span><Select value={prefs.sort} onChange={e => onPrefs({ ...prefs, sort: e.target.value as Preferences['sort'] })}><option value="recent">{t('最近')}</option><option value="name">{t('名前')}</option><option value="size">{t('ファイルサイズ')}</option></Select></label>
           <Segmented label={t('表示')} value={prefs.layout} onChange={layout => onPrefs({ ...prefs, layout })} options={[{ value: 'grid', label: <LayoutGrid size={15} aria-label={t('グリッド')}/>, title: t('グリッド') }, { value: 'list', label: <List size={15} aria-label={t('リスト')}/>, title: t('リスト') }]}/>
         </div>}
         <div className="glass-scroll">

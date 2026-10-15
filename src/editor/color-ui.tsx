@@ -8,6 +8,7 @@ import { canvas as makeCanvas } from '../imaging';
 import { colorStage } from './document';
 import { IconButton, Segmented, Slider } from '../ui';
 import { t } from '../i18n/index.mjs';
+import { Select } from '../Select';
 
 type Channel = keyof Curves;
 const CHANNEL_COLOR: Record<Channel, string> = { rgb: 'var(--label)', r: '#ff453a', g: '#30d158', b: '#0a84ff' };
@@ -107,11 +108,11 @@ export function LutPicker({ lut, cubes, onChange, onCommit, onImport, onRemove }
   const missing = lut && !cubes.some(c => c.id === lut.id);
   return <div className="lut-picker">
     <div className="field"><span>LUT</span><span className="field-row">
-      <select value={lut?.id || ''} aria-label="LUT" onChange={e => onChange(e.target.value ? { id: e.target.value, amount: lut?.amount ?? 100 } : null, false)}>
+      <Select value={lut?.id || ''} aria-label="LUT" onChange={e => onChange(e.target.value ? { id: e.target.value, amount: lut?.amount ?? 100 } : null, false)}>
         <option value="">{t('なし')}</option>
         {cubes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         {missing && <option value={lut.id}>{t('（見つかりません）')}</option>}
-      </select>
+      </Select>
       <IconButton icon={FileUp} label={t('.cube ファイルを読み込む')} size={16} onClick={onImport}/>
       {lut && !missing && <IconButton icon={Trash2} label={t('この LUT をライブラリから削除')} size={16} onClick={() => onRemove(lut.id)}/>}
     </span></div>

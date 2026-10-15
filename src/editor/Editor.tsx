@@ -36,6 +36,7 @@ import { AiPanel, type AiBusy } from './AiPanel';
 import { cancelAi, removeArea, skyMaskCanvas, subjectMask, upscale } from '../ai/ai';
 import { IconButton, Modal, Slider, mod } from '../ui';
 import { t } from '../i18n/index.mjs';
+import { Select } from '../Select';
 
 type Tab = 'adjust' | 'layers' | 'ai' | 'history' | 'info';
 const TABS: Tab[] = ['layers', 'adjust', 'ai', 'history', 'info'];
@@ -1368,7 +1369,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement)?.closest('input:not([type=range]):not([type=color]), select, textarea, dialog')) return;
+      if ((event.target as HTMLElement)?.closest('input:not([type=range]):not([type=color]), select, .select-trigger, textarea, dialog')) return;
       // A focused slider keeps its own arrow, Home/End and Page keys; Delete must not erase the image either.
       if ((event.target as HTMLElement)?.matches?.('input[type=range]') && /^(arrow|home|end|page|delete|backspace)/i.test(event.key)) return;
       const command = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
@@ -1468,7 +1469,7 @@ export function Editor({ project, prefs, onClose, onUpdate, onToast, onSettings,
         {aiBusy && tab !== 'ai' && <div className="ai-chip" role="status"><span className="spinner" aria-hidden="true"/><span>{aiBusy.label}{aiBusy.progress !== null && ` ${Math.round(aiBusy.progress * 100)}%`}</span><button type="button" className="btn ghost small" onClick={cancelAi}>{t('中止')}</button></div>}
         {!before && <ToolOptions tool={tool} settings={settings} onChange={setSettings} hasSelection={!!selection} onSelectionCommand={selectionCommand} onRefine={refine} hint={hint} onHelp={() => setHelp(true)}/>}
         {tool === 'crop' && <div className="crop-bar" role="toolbar" aria-label={t('切り抜き')}>
-          <label className="select"><span>{t('比率')}</span><select value={aspectId} onChange={e => chooseAspect(e.target.value)}>{ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
+          <label className="select"><span>{t('比率')}</span><Select value={aspectId} onChange={e => chooseAspect(e.target.value)}>{ASPECTS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}</Select></label>
           <div className="crop-angle"><Slider label={t('角度')} value={doc.geometry.angle} min={-MAX_ANGLE} max={MAX_ANGLE} step={0.1} format={v => `${v.toFixed(1)}°`} centered onChange={straighten} onCommit={endGesture} onReset={() => straighten(0)}/></div>
           <IconButton icon={RotateCcw} label={t('左に90°回転')} onClick={() => change(d => ({ ...d, geometry: rotateQuarter(d.geometry, -1, d.width, d.height) }), t('左に回転'))}/>
           <IconButton icon={RotateCw} label={t('右に90°回転')} onClick={() => change(d => ({ ...d, geometry: rotateQuarter(d.geometry, 1, d.width, d.height) }), t('右に回転'))}/>
